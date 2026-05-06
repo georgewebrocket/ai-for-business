@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 25.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Layer_1" xmlns:sketch="http://www.bohemiancoding.com/sketch/ns"
+	 xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="800px" height="800px"
+	 viewBox="0 0 800 800" style="enable-background:new 0 0 800 800;" xml:space="preserve">
+<style type="text/css">
+	.st0{fill-rule:evenodd;clip-rule:evenodd;fill:#009604;}
+</style>
+<desc>Created with Sketch Beta.</desc>
+<g id="Page-1" sketch:type="MSPage">
+	<g id="Icon-Set-Filled" transform="translate(-466.000000, -985.000000)" sketch:type="MSLayerGroup">
+		<path id="arrow-right-square" sketch:type="MSShapeGroup" class="st0" d="M1054.4,1407L913,1548.5c-9.8,9.8-25.6,9.8-35.4,0
+			c-9.8-10-9.8-25.7,0-35.5l103-103H716c-13.8,0-25-11.2-25-25c0-13.8,11.2-25,25-25h264.6l-103-103c-9.8-9.8-9.8-25.6,0-35.3
+			c9.8-9.8,25.6-9.8,35.4,0l141.4,141.4c6,6,7.9,14.2,6.5,22C1062.3,1392.8,1060.4,1401,1054.4,1407L1054.4,1407z M1166,985H566
+			c-55.2,0-100,44.8-100,100v600c0,55.3,44.8,100,100,100h600c55.2,0,100-44.7,100-100v-600C1266,1029.8,1221.2,985,1166,985
+			L1166,985z"/>
+	</g>
+</g>
+</svg>

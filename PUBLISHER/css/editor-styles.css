@@ -1,0 +1,38 @@
+/** element styles */
+.btn,
+input[type='submit'] {
+    display:inline-block;
+    padding:10px 20px;
+    background-color:#000;
+    color:#fff !important;
+    border:1px solid #000;
+    transition:all 0.5s;
+    font-weight:bold;
+    cursor:pointer;
+}
+
+.cta-section {
+    padding:50px 20px;
+    margin-bottom:20px;
+    background-color: #eee;
+    border:2px dashed #aaa;
+    text-align:center;
+}
+.cta-section h2,
+.cta-section p {
+    margin-bottom:25px;
+}
+
+
+.full-width {
+    background-color: #eee;
+    border:2px dashed #aaa;
+    padding: 40px 20px;
+    position: relative;
+    width: 100%;
+    
+}
+.full-width > * {
+    max-width: 800px;
+    margin: auto;
+}

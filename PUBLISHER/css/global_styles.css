@@ -1,0 +1,213 @@
+.container-100 {
+    width:100%;
+    position: relative;
+}
+
+.container-1200 {
+    width:1200px;
+    margin: auto;
+    max-width: 100%;
+    position: relative;
+}
+
+.clear { clear:both; }
+
+.spacer-5 { clear:both; height:5px; }
+.spacer-10 { clear:both; height:10px; }
+.spacer-20 { clear:both; height:20px; }
+.spacer-30 { clear:both; height:30px; }
+.spacer-50 { clear:both; height:50px; }
+.spacer-100 { clear:both; height:100px; }
+.spacer-200 { clear:both; height:200px; }
+
+
+.text-12 { font-size:12px;}
+.text-13 { font-size:13px;}
+.text-14 { font-size:14px;}
+.text-15 { font-size:15px;}
+.text-16 { font-size:16px;}
+.text-18 { font-size:18px;}
+.text-20 { font-size:20px;}
+.text-25 { font-size:25px;}
+.text-30 { font-size:30px;}
+.text-35 { font-size:35px;}
+.text-40 { font-size:40px;}
+
+.line-height-18 { line-height: 18px;}
+.line-height-20 { line-height: 20px;}
+.line-height-22 { line-height: 22px;}
+.line-height-24 { line-height: 24px;}
+.line-height-26 { line-height: 26px;}
+
+.txt-bold { font-weight: 700;}
+.txt-medium { font-weight: 500;}
+.txt-normal { font-weight: 400;}
+
+.padding-5 { padding: 5px;}
+.padding-10 { padding: 10px;}
+.padding-15 { padding: 15px;}
+.padding-20 { padding: 20px;}
+.padding-30 { padding: 30px;}
+.padding-5-0 { padding: 5px 0px;}
+.padding-10-0 { padding: 10px 0px;}
+.padding-20-0 { padding: 20px 0px;}
+
+.margin-bottom-10 { margin-bottom: 10px;}
+.margin-bottom-20 { margin-bottom: 20px;}
+
+.rounded-box-15 { border-radius: 15px;}
+
+
+.centered { text-align:center; }
+.right { text-align:right; }
+.left { text-align:left; }
+@media screen and (max-width: 800px) {
+.mobile-center {
+    text-align:center !important;
+}    
+}
+
+.blue-verydark-txt { color: #164581; }
+.blue-mediumdark-txt { color: #176ea5; }
+.blue-dark-txt { color: #1185cd; }
+.blue-medium-txt { color: #50a5da; }
+.blue-light-txt { color: #82cff2; }
+.white-txt { color:#ffffff; }
+.gray-txt { color:#a7a7a7; }
+.gray-dark-txt { color:#505050;}
+
+.blue-verylight-bg { background-color: #d9f4ff; }
+.blue-light-bg { background-color: #82cff2; }
+.blue-dark-bg { background-color: #1185cd; }
+.white-bg { background-color: #fff; }
+.red-bg { background-color: #e31e26;}
+
+.invisible {display:none;}
+.opacity-0 {opacity:0;}
+
+img {
+    max-width: 100%;
+    height: auto;
+}
+img.alignleft {
+    float: left;
+    margin-right: 20px;
+    margin-bottom: 20px;
+}
+img.alignright {
+    float: right;
+    margin-left: 20px;
+    margin-bottom: 20px;
+}
+
+.cover {
+    position:fixed;
+    top:0px;
+    left:0px;
+    width:100%;
+    padding-top:100px;
+    height:1200px;
+    background-color:rgba(0,0,0,0.2);
+}
+.msg {
+    width:400px;
+    max-width:70%;
+    margin:auto;
+    padding:30px;
+    background-color:white;
+    border:10px solid rgb(150,150,150);
+    border-radius:10px;
+    background-image:url(../img/close.png);
+    background-position:top right;
+    background-repeat:no-repeat;
+    cursor:pointer;
+}
+.pagination a{
+    padding: 4px 12px;
+    background-color: #fff;
+    border: 1px solid #ddd;
+}
+.pagination .paginate-current{
+    color: #333;
+    background-color: #f5f5f5;
+}
+.pagination a:hover{
+    color: #414141;
+    background-color: #f5f5f5;
+}
+
+
+input[type=checkbox], input[type=radio] {
+    width:20px;
+    height: 20px;
+    margin-bottom: 15px !important;
+}
+
+
+.ac-select {
+  position:absolute; top:40px; left:0px; background-color: #fefefe; z-index: 1; 
+  box-shadow:3px 3px 7px rgba(0,0,0,0.1);
+  width:100%;
+  border-left:1px solid #ccc;
+  border-top:1px solid #ccc;
+}
+.ac-select ul {
+    list-style:none;
+    margin:0px;
+    padding:0px;
+}
+.ac-select ul li {
+  padding:10px;
+  cursor:pointer;
+  border-bottom: 1px solid #ccc;
+}
+.ac-select ul li:hover {
+  background-color: #ffa;
+}
+
+
+.navbar-brand {
+    padding: 13px 15px !important;
+}
+
+
+
+@media screen and (max-width:800px) {
+    .datagrid-container {
+        overflow-x:scroll;
+    }
+}
+
+
+.modal-dialog {
+    max-width:95%;
+}
+
+.info {
+    position:fixed;
+    bottom:10px;
+    right:10px;
+    padding:10px 20px;
+    border-radius: 20px;
+    background-color: #444;
+    color:#fff;
+    cursor:pointer;
+}
+.info:hover {
+    color:#fff;
+}
+
+
+
+@media (min-width:700px) {
+    .navbar {
+        position:fixed;
+        top:0px;
+        left:0px;
+        right:0px;
+        z-index:999;
+    }
+    body {
+        padding-top:50px;
+    }
+}

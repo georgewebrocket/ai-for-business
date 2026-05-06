@@ -1,0 +1,9 @@
+.o-print {display: none;}
+
+@media print {
+    body {font-size: 10px;}
+    .footer, .btn, a {display: none}
+    .o-print {display: block;}
+    input {border: none;}
+    .second-page { page-break-after: always;} 
+}
