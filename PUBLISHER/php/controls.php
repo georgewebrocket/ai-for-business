@@ -2703,6 +2703,13 @@ class CONTROL
                 if ($fullControl) { $myTextBox->get_Textbox(); }
                 else { echo $myTextBox->textboxSimple(); }
                 break;
+
+            case "hidden-area":
+                $postVal = $post? $post[$property]: "";
+                $val = $item? $item->$property(): $postVal;
+                $val = htmlspecialchars((string)$val, ENT_QUOTES, 'UTF-8');
+                echo '<textarea class="form-control hidden-area" name="' . $fields[$controlIndex] . '" id="' . $fields[$controlIndex] . '" style="opacity:0;height:0;min-height:0;overflow:hidden;padding:0;border:0;margin:0;" rows="1">' . $val . '</textarea>';
+                break;
                 
             case "richtextbox":
                 $postVal = $post? $post[$property]: "";
@@ -3054,6 +3061,7 @@ EOT;
                         case "text":
                         case "hidden":                        
                         case "textarea":
+                        case "hidden-area":
                         case "richtextbox":
                         case "integer":
                         case "combobox":
@@ -3253,6 +3261,7 @@ class LISTCONTROL
     protected $_itemName;
     protected $_sumcols;
     protected $_datagrid;
+    protected $_selectRow, $_selectLabel;
 
 
     protected $_searchFields, $_searchFieldTypes, $_searchFieldNames, $_searchFieldAttributes;
@@ -3272,6 +3281,8 @@ class LISTCONTROL
         $this->_locale = $locale;
         $this->_dbo = $dbo;
         $this->_sql = $sql;
+        $this->_selectRow = FALSE;
+        $this->_selectLabel = "select";
         
         for ($i = 0; $i < count($this->_fields); $i++) {
             $this->_fieldAttributes[$this->_fields[$i]] = "";
@@ -3296,6 +3307,11 @@ class LISTCONTROL
 
     public function set_sumcols($array) {
         $this->_sumcols = $array;
+    }
+
+    public function set_select($label = "select") {
+        $this->_selectRow = TRUE;
+        $this->_selectLabel = $label;
     }
     
     
@@ -3627,6 +3643,9 @@ class LISTCONTROL
         if ($edit) {
             $grid->set_edit($editUrl, $editLabel, "", $this->_itemName, $editPopupHeight, $editPopupWidth);
         }
+        if ($this->_selectRow) {
+            $grid->set_select($this->_selectLabel);
+        }
         
         $colsFormat = array();
         for ($i = 0; $i < count($this->_fieldTypes); $i++) {
@@ -3700,6 +3719,9 @@ class LISTCONTROL
         $grid->set_rs($this->_rs);
         if ($edit) {
             $grid->set_edit($editUrl, $editLabel, "", $this->_itemName, $editPopupHeight, $editPopupWidth);
+        }
+        if ($this->_selectRow) {
+            $grid->set_select($this->_selectLabel);
         }
         
         $colsFormat = array();

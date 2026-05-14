@@ -8,6 +8,8 @@ require_once('php/start.php');
 require_once('php/session.php');
 require_once('php/controls.php');
 require_once('php/ai.php');
+require_once('php/ai-settings.php');
+require_once('php/editorial-context.php');
 
 publisher_require_permission('content');
 publisher_require_property();
@@ -127,7 +129,7 @@ function cci_save_config($dbo, $propertyId, $accountId, $settingsJson, $config) 
     return $encodedSettings;
 }
 
-function cci_normalize_config($post) {
+function cci_normalize_config($post, $aiDefaults = []) {
     $articleCount = max(1, min(50, (int)($post['article_count'] ?? 5)));
     $period = in_array(($post['period'] ?? 'week'), ['day', 'week', 'month'], true) ? $post['period'] : 'week';
     $mode = in_array(($post['mode'] ?? 'manual'), ['manual', 'automatic'], true) ? $post['mode'] : 'manual';
@@ -146,6 +148,8 @@ function cci_normalize_config($post) {
         'article_count' => $articleCount,
         'period' => $period,
         'mode' => $mode,
+        'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.2'), $aiDefaults['text_model'] ?? 'gpt-5.2'),
+        'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-1.5'), $aiDefaults['image_model'] ?? 'gpt-image-1.5'),
         'mix' => $mix,
     ];
 }
@@ -174,11 +178,12 @@ function cci_collect_mix_rows($dbo, $accountId, $propertyId, $mix) {
     return $rows;
 }
 
-function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null) {
+function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null, $editorialContext = []) {
     $count = $replacementCount !== null ? (int)$replacementCount : (int)$config['article_count'];
     $mixRows = array_slice($mixRows, 0, max(1, $count));
     $mixJson = json_encode($mixRows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $existingJson = json_encode(array_values($existingTitles), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    $editorialContextBlock = editorial_context_prompt_block($editorialContext);
 
     return <<<PROMPT
 Create {$count} content ideas for property "{$propertyName}".
@@ -186,12 +191,20 @@ Create {$count} content ideas for property "{$propertyName}".
 Planning period: {$config['period']}.
 
 For each idea, follow the matching content_mix item by index. If fewer mix items are provided than requested ideas, reuse the mix items cyclically.
+For every idea, generate tags, language, writing instructions, sections, tone, and image_prompt.
+Use the writing_style for language, tone, and instructions when available.
+Use the template structure for sections when available. Each section must include a suggested title, specific writing instructions for that section, and a recommended word count.
+Section titles must be specific to the article topic and must not use generic repeated labels such as "Introduction", "Main body", "Body", or "Conclusion".
+Use the image_style to create a detailed image_prompt. The image_prompt must include both the image style and detailed subject guidance based on the idea title, summary, category, tags, and property context.
+The image_prompt must be safe for image generation: avoid specific brand names, logos, copyrighted characters, fictional franchises, recognizable celebrities/public figures, exact product designs, posters, screenshots, album covers, and references to the style of living artists. If the idea topic involves a protected brand, person, franchise, or copyrighted work, describe the broader concept with fictional/generic visual elements instead. If any part of the image_prompt would violate safety rules related to similarity with third-party content, remove those elements and replace them with similar generic elements that do not have that issue.
 
 Content mix:
 {$mixJson}
 
 Avoid titles that are identical or too similar to these existing or rejected titles:
 {$existingJson}
+
+{$editorialContextBlock}
 
 Return only valid JSON with this exact shape:
 {
@@ -201,11 +214,50 @@ Return only valid JSON with this exact shape:
       "category": "string",
       "summary": "string",
       "tags": ["string"],
+      "language": "string",
+      "instructions": "string",
+      "sections": [
+        {
+          "title": "string",
+          "instructions": "string",
+          "word_count": 120
+        }
+      ],
+      "tone": "string",
+      "image_prompt": "string",
       "content_mix_index": 1
     }
   ]
 }
 PROMPT;
+}
+
+function cci_normalize_text_list($value) {
+    if (is_array($value)) {
+        return array_values(array_filter(array_map(function($item) {
+            if (is_array($item)) {
+                return trim((string)($item['title'] ?? $item['name'] ?? $item['heading'] ?? json_encode($item, JSON_UNESCAPED_UNICODE)));
+            }
+            return trim((string)$item);
+        }, $value), function($item) {
+            return $item !== '';
+        }));
+    }
+
+    return array_values(array_filter(array_map('trim', explode(',', (string)$value)), function($item) {
+        return $item !== '';
+    }));
+}
+
+function cci_stringify_list($value) {
+    return implode(', ', cci_normalize_text_list($value));
+}
+
+function cci_stringify_sections($value) {
+    if (is_array($value)) {
+        return json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+    return trim((string)$value);
 }
 
 function cci_parse_ai_articles($content) {
@@ -228,15 +280,16 @@ function cci_parse_ai_articles($content) {
         if ($title === '') {
             continue;
         }
-        $tags = $article['tags'] ?? [];
-        if (!is_array($tags)) {
-            $tags = array_filter(array_map('trim', explode(',', (string)$tags)));
-        }
         $result[] = [
             'title' => $title,
             'category' => trim((string)($article['category'] ?? '')),
             'summary' => trim((string)($article['summary'] ?? '')),
-            'tags' => array_values($tags),
+            'tags' => cci_normalize_text_list($article['tags'] ?? []),
+            'language' => trim((string)($article['language'] ?? '')),
+            'instructions' => trim((string)($article['instructions'] ?? '')),
+            'sections' => $article['sections'] ?? [],
+            'tone' => trim((string)($article['tone'] ?? '')),
+            'image_prompt' => trim((string)($article['image_prompt'] ?? '')),
             'content_mix_index' => max(1, (int)($article['content_mix_index'] ?? count($result) + 1)),
         ];
     }
@@ -246,8 +299,10 @@ function cci_parse_ai_articles($content) {
 
 function cci_generate_articles($dbo, $accountId, $propertyId, $propertyName, $config, $existingTitles = [], $replacementCount = null, &$errors = []) {
     $mixRows = cci_collect_mix_rows($dbo, $accountId, $propertyId, $config['mix']);
-    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount);
+    $editorialContext = editorial_context_get($dbo, $accountId, $propertyId);
+    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount, $editorialContext);
     $ai = new ai(openai::$key);
+    $ai->text_model($config['text_model'] ?? 'gpt-5.2');
     $ai->instructions('You are an editorial planning assistant. Return only valid JSON, no markdown.');
     $ai->prompt($prompt);
     $response = $ai->send_request();
@@ -269,7 +324,9 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
     $mixIndex = max(1, (int)($article['content_mix_index'] ?? 1)) - 1;
     $mix = $config['mix'][$mixIndex] ?? ($config['mix'][0] ?? []);
     $templateId = (int)($mix['content_template_id'] ?? 0);
+    $writingStyleId = (int)($mix['writing_style_id'] ?? 0);
     $contentTypeId = null;
+    $writingStyle = null;
 
     if ($templateId > 0) {
         $templateRows = $dbo->getRS('SELECT content_type_id FROM content_templates WHERE id = ? AND account_id = ? AND (property_id = ? OR property_id IS NULL) LIMIT 1', [$templateId, $accountId, $propertyId]);
@@ -278,17 +335,47 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
         }
     }
 
+    if ($writingStyleId > 0) {
+        $styleRows = $dbo->getRS('SELECT tone, language, instructions FROM writing_styles WHERE id = ? AND account_id = ? AND property_id = ? LIMIT 1', [$writingStyleId, $accountId, $propertyId]);
+        if ($styleRows) {
+            $writingStyle = $styleRows[0];
+        }
+    }
+
+    $tags = cci_stringify_list($article['tags'] ?? []);
+    $sections = cci_stringify_sections($article['sections'] ?? []);
+    $tone = trim((string)($article['tone'] ?? ''));
+    $language = trim((string)($article['language'] ?? ''));
+    $instructions = trim((string)($article['instructions'] ?? ''));
+    $imagePrompt = trim((string)($article['image_prompt'] ?? ''));
+
+    if ($tone === '' && $writingStyle) {
+        $tone = (string)$writingStyle['tone'];
+    }
+    if ($language === '' && $writingStyle) {
+        $language = (string)$writingStyle['language'];
+    }
+    if ($instructions === '' && $writingStyle) {
+        $instructions = (string)$writingStyle['instructions'];
+    }
+
     $metadata = [
         'article' => $article,
         'content_mix' => $mix,
+        'ai_models' => [
+            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
+            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
+            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
+            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
+        ],
         'ai_response' => json_decode($aiResponse, true) ?: $aiResponse,
     ];
 
     $now = date('Y-m-d H:i:s');
     return $dbo->execSQL(
         'INSERT INTO content_ideas
-         (account_id, property_id, content_type_id, category_id, title, summary, prompt, ai_response_json, similarity_score, status, created_by, content_item_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+         (account_id, property_id, content_type_id, category_id, title, summary, tags, sections, tone, language, instructions, image_prompt, prompt, ai_response_json, similarity_score, status, created_by, content_item_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
             $accountId,
             $propertyId,
@@ -296,6 +383,12 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
             (int)($mix['content_category_id'] ?? 0) ?: null,
             $article['title'],
             $article['summary'] ?? '',
+            $tags,
+            $sections,
+            $tone,
+            $language,
+            $instructions,
+            $imagePrompt,
             $prompt,
             json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
             null,
@@ -315,14 +408,19 @@ if (!$propertyRows) {
 }
 $property = $propertyRows[0];
 $propertySettings = cci_decode_property_settings($property['settings_json'] ?? '');
+$propertyAiDefaults = publisher_property_ai_defaults($propertySettings);
 $savedConfig = cci_get_settings_section($propertySettings, 'create_content_ideas');
 $defaultConfig = [
     'article_count' => 5,
     'period' => 'week',
     'mode' => 'manual',
+    'text_model' => $propertyAiDefaults['text_model'],
+    'image_model' => $propertyAiDefaults['image_model'],
     'mix' => [],
 ];
 $config = array_merge($defaultConfig, is_array($savedConfig) ? $savedConfig : []);
+$config['text_model'] = publisher_ai_normalize_text_model($config['text_model'] ?? null, $propertyAiDefaults['text_model']);
+$config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model']);
 if (!isset($config['mix']) || !is_array($config['mix'])) {
     $config['mix'] = [];
 }
@@ -331,6 +429,8 @@ $categories = $dbo->getRS('SELECT id, name FROM content_categories WHERE account
 $writingStyles = $dbo->getRS('SELECT id, name FROM writing_styles WHERE account_id = ? AND property_id = ? ORDER BY name', [$accountId, $propertyId]) ?: [];
 $templates = $dbo->getRS('SELECT id, name FROM content_templates WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name', [$accountId, $propertyId]) ?: [];
 $imageStyles = $dbo->getRS('SELECT id, name FROM image_styles WHERE account_id = ? AND property_id = ? AND active = 1 ORDER BY name', [$accountId, $propertyId]) ?: [];
+$textModelOptions = publisher_ai_text_model_options();
+$imageModelOptions = publisher_ai_image_model_options();
 
 $suggestions = $_SESSION[$sessionKey]['articles'] ?? [];
 $lastPrompt = $_SESSION[$sessionKey]['prompt'] ?? '';
@@ -340,7 +440,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'continue') {
-        $config = cci_normalize_config($_POST);
+        $config = cci_normalize_config($_POST, $propertyAiDefaults);
         $property['settings_json'] = cci_save_config($dbo, $propertyId, $accountId, $property['settings_json'] ?? '', $config);
         $success = 'Οι επιλογές αποθηκεύτηκαν.';
 
@@ -475,6 +575,22 @@ function cci_options($rows, $selectedId) {
                     <select class="form-control" id="mode" name="mode">
                         <option value="manual" <?php echo $config['mode'] === 'manual' ? 'selected' : ''; ?>>Manual</option>
                         <option value="automatic" <?php echo $config['mode'] === 'automatic' ? 'selected' : ''; ?>>Automatic</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="text_model">Text model</label>
+                    <select class="form-control" id="text_model" name="text_model">
+                        <?php foreach ($textModelOptions as $value => $label) { ?>
+                            <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $config['text_model'] === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php } ?>
+                    </select>
+                </div>
+                <div>
+                    <label for="image_model">Default image model</label>
+                    <select class="form-control" id="image_model" name="image_model">
+                        <?php foreach ($imageModelOptions as $value => $label) { ?>
+                            <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $config['image_model'] === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php } ?>
                     </select>
                 </div>
             </div>

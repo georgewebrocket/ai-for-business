@@ -4,7 +4,7 @@
 class ai
 {
 
-    protected $apiKey, $instructions, $prompt, $lang;
+    protected $apiKey, $instructions, $prompt, $lang, $textModel = 'gpt-5.2', $imageModel = 'gpt-image-1.5';
 
     public function __construct($apiKey) {
         $this->apiKey = $apiKey;
@@ -22,30 +22,33 @@ class ai
         $this->lang = $val;
     }
 
+    public function text_model($val) {
+        $this->textModel = trim((string)$val) !== '' ? trim((string)$val) : $this->textModel;
+    }
+
+    public function image_model($val) {
+        $this->imageModel = trim((string)$val) !== '' ? trim((string)$val) : $this->imageModel;
+    }
+
     public function send_request() {
-        // Prepare request
         $data = [
-            "model" => "gpt-4o",
-            "messages" => [
-                ["role" => "system", "content" => $this->instructions ],
-                ["role" => "user", "content" => $this->prompt]
+            "model" => $this->textModel,
+            "instructions" => (string)$this->instructions,
+            "input" => (string)$this->prompt,
+            "reasoning" => [
+                "effort" => "medium"
             ],
-            "temperature" => 0.7,
-            "max_tokens"        => 4000,
-            "top_p"             => 1,
-            "frequency_penalty" => 0,
-            "presence_penalty"  => 0,
+            "max_output_tokens" => 4000,
         ];
 
-        // Initialize cURL
-        $ch = curl_init('https://api.openai.com/v1/chat/completions');
+        $ch = curl_init('https://api.openai.com/v1/responses');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Authorization: Bearer ' . $this->apiKey
         ]);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_UNESCAPED_UNICODE));
 
         // Execute request
         $response = curl_exec($ch);
@@ -65,7 +68,7 @@ class ai
         // 2. HTTP status code check
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        if ($httpCode !== 200) {
+        if ($httpCode < 200 || $httpCode >= 300) {
             // Try to decode any error message from the body
             $body = json_decode($response, true);
             $message = $body['error']['message'] 
@@ -109,7 +112,7 @@ class ai
         }
 
         // 5. Extract content safely
-        $content = $result['choices'][0]['message']['content'] ?? '';
+        $content = $this->extract_response_text($result);
         if ($content === '') {
             $err_msg = json_encode(['error' => 'Empty content in API response']);
             return [
@@ -117,10 +120,6 @@ class ai
                 'message' => $err_msg,
             ];
         }
-
-        // Decode the response
-        $result = json_decode($response, true);
-        $content = $result['choices'][0]['message']['content'] ?? '';
 
         // Parse the JSON from the AI output
         // Remove ```json and ``` if present
@@ -130,13 +129,11 @@ class ai
 
         $ai_content = $cleaned;
 
-        $promptTokens = $result['usage']['prompt_tokens'] ?? 0;
-        $completionTokens = $result['usage']['completion_tokens'] ?? 0;
-        // Υπολογισμός κόστους (gpt-4o)
-        $promptCost = ($promptTokens / 1000) * 0.005;
-        $completionCost = ($completionTokens / 1000) * 0.015;
-        $totalCost = $promptCost + $completionCost;
-        $ai_cost = "<p>Εκτιμώμενο Κόστος GPT-4o: $totalCost $</p>";
+        $inputTokens = $result['usage']['input_tokens'] ?? 0;
+        $outputTokens = $result['usage']['output_tokens'] ?? 0;
+        // Token usage returned by the Responses API.
+        $totalTokens = $result['usage']['total_tokens'] ?? ($inputTokens + $outputTokens);
+        $ai_cost = "<p>{$this->textModel} tokens: input {$inputTokens}, output {$outputTokens}, total {$totalTokens}</p>";
 
         $response = [
             "result" => 'success',
@@ -147,14 +144,41 @@ class ai
 
     }
 
+    private function extract_response_text($result) {
+        if (!empty($result['output_text'])) {
+            return (string)$result['output_text'];
+        }
+
+        if (empty($result['output']) || !is_array($result['output'])) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($result['output'] as $outputItem) {
+            if (empty($outputItem['content']) || !is_array($outputItem['content'])) {
+                continue;
+            }
+            foreach ($outputItem['content'] as $contentItem) {
+                if (isset($contentItem['text'])) {
+                    $parts[] = (string)$contentItem['text'];
+                }
+            }
+        }
+
+        return trim(implode("\n", $parts));
+    }
+
 
     private function generate_openai_image() {
         $endpoint = 'https://api.openai.com/v1/images/generations';
         $data = [
-            "model" => "dall-e-3",
+            "model" => $this->imageModel,
             'prompt' => $this->prompt,
             'n'      => 1,
-            'size'   => '1792x1024'
+            'size'   => '1536x1024',
+            'quality' => 'medium',
+            'output_format' => 'jpeg',
+            'output_compression' => 85,
         ];
         $ch = curl_init($endpoint);
         curl_setopt_array($ch, [
@@ -171,10 +195,60 @@ class ai
         if (curl_errno($ch)) {
             throw new Exception('OpenAI API request error: ' . curl_error($ch));
         }
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
         $body = json_decode($response, true);
-        if (!isset($body['data'][0]['url'])) {
+        if ($httpCode < 200 || $httpCode >= 300) {
+            $message = is_array($body) ? ($body['error']['message'] ?? 'Unexpected HTTP status: ' . $httpCode) : ('Unexpected HTTP status: ' . $httpCode);
+            throw new Exception('OpenAI image generation failed: ' . $message);
+        }
+        if (!is_array($body)) {
+            throw new Exception('Invalid OpenAI image generation response: ' . $response);
+        }
+
+        if (isset($body['data'][0]['b64_json'])) {
+            $imageBytes = base64_decode($body['data'][0]['b64_json'], true);
+            if ($imageBytes === false) {
+                throw new Exception('Failed to decode OpenAI image data.');
+            }
+            return [
+                'data' => $imageBytes,
+                'type' => 'image/' . ($body['output_format'] ?? 'jpeg'),
+            ];
+        }
+
+        if (isset($body['data'][0]['url'])) {
+            return $this->download_image_data($body['data'][0]['url']);
+        }
+
+        if (isset($body['output'][0]['result'])) {
+            $imageBytes = base64_decode($body['output'][0]['result'], true);
+            if ($imageBytes === false) {
+                throw new Exception('Failed to decode OpenAI image data.');
+            }
+            return [
+                'data' => $imageBytes,
+                'type' => 'image/jpeg',
+            ];
+        }
+
+        if (isset($body['output'])) {
+            foreach ($body['output'] as $output) {
+                if (($output['type'] ?? '') === 'image_generation_call' && isset($output['result'])) {
+                    $imageBytes = base64_decode($output['result'], true);
+                    if ($imageBytes === false) {
+                        throw new Exception('Failed to decode OpenAI image data.');
+                    }
+                    return [
+                        'data' => $imageBytes,
+                        'type' => 'image/jpeg',
+                    ];
+                }
+            }
+        }
+
+        if (!isset($body['data'][0])) {
             throw new Exception('Unexpected OpenAI response: ' . $response);
         }
 
@@ -183,7 +257,7 @@ class ai
         // echo "Completion tokens: {$usage['completion_tokens']}<br/>";
         // echo "Total tokens: {$usage['total_tokens']}<br/>";
 
-        return $body['data'][0]['url'];
+        throw new Exception('OpenAI image generation response did not include image data.');
 
     }
 
@@ -210,8 +284,7 @@ class ai
     public function create_image(string $directory): string
     {
         // 1. Generate & download
-        $url       = $this->generate_openai_image();
-        $imageData = $this->download_image_data($url);
+        $imageData = $this->generate_openai_image();
 
         // 2. Normalize & ensure directory exists
         $directory = rtrim($directory, DIRECTORY_SEPARATOR);

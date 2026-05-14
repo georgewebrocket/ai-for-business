@@ -45,6 +45,8 @@ $defaultSettings = [
     ],
     'ai' => [
         'default_ai_profile_id' => 0,
+        'default_text_model' => 'gpt-5.2',
+        'default_image_model' => 'gpt-image-1.5',
         'default_writing_style_id' => 0,
         'default_template_id' => 0,
         'default_language' => 'el',

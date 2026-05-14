@@ -691,6 +691,12 @@ content_type_id
 category_id
 title
 summary
+tags
+sections
+tone
+language
+instructions
+image_prompt
 prompt
 ai_response_json
 similarity_score
@@ -703,7 +709,7 @@ updated_at
 class content_ideas extends publisher_data_object
 {
     protected static $_table = 'content_ideas';
-    protected static $_columns = ['id', 'account_id', 'property_id', 'content_type_id', 'category_id', 'title', 'summary', 'prompt', 'ai_response_json', 'similarity_score', 'status', 'created_by', 'content_item_id', 'created_at', 'updated_at'];
+    protected static $_columns = ['id', 'account_id', 'property_id', 'content_type_id', 'category_id', 'title', 'summary', 'tags', 'sections', 'tone', 'language', 'instructions', 'image_prompt', 'prompt', 'ai_response_json', 'similarity_score', 'status', 'created_by', 'content_item_id', 'created_at', 'updated_at'];
     protected static $_primaryKey = ['id'];
     protected static $_autoIncrement = true;
 
@@ -740,6 +746,36 @@ class content_ideas extends publisher_data_object
     public function summary($val = NULL) {
         if ($val === NULL) { return $this->get('summary'); }
         $this->set('summary', $val);
+    }
+
+    public function tags($val = NULL) {
+        if ($val === NULL) { return $this->get('tags'); }
+        $this->set('tags', $val);
+    }
+
+    public function sections($val = NULL) {
+        if ($val === NULL) { return $this->get('sections'); }
+        $this->set('sections', $val);
+    }
+
+    public function tone($val = NULL) {
+        if ($val === NULL) { return $this->get('tone'); }
+        $this->set('tone', $val);
+    }
+
+    public function language($val = NULL) {
+        if ($val === NULL) { return $this->get('language'); }
+        $this->set('language', $val);
+    }
+
+    public function instructions($val = NULL) {
+        if ($val === NULL) { return $this->get('instructions'); }
+        $this->set('instructions', $val);
+    }
+
+    public function image_prompt($val = NULL) {
+        if ($val === NULL) { return $this->get('image_prompt'); }
+        $this->set('image_prompt', $val);
     }
 
     public function prompt($val = NULL) {

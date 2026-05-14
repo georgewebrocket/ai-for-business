@@ -2,9 +2,9 @@
 
 function publisher_role_permissions() {
     return [
-        'owner' => ['dashboard', 'accounts', 'users', 'team', 'properties', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'settings', 'content', 'ai', 'channels', 'help'],
-        'admin' => ['dashboard', 'users', 'team', 'properties', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'settings', 'content', 'ai', 'channels', 'help'],
-        'editor' => ['dashboard', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'content', 'ai', 'channels', 'help'],
+        'owner' => ['dashboard', 'accounts', 'users', 'team', 'properties', 'content_types', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'settings', 'content', 'ai', 'channels', 'help'],
+        'admin' => ['dashboard', 'users', 'team', 'properties', 'content_types', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'settings', 'content', 'ai', 'channels', 'help'],
+        'editor' => ['dashboard', 'content_types', 'content_categories', 'writing_styles', 'image_styles', 'content_templates', 'content', 'ai', 'channels', 'help'],
         'author' => ['dashboard', 'content', 'ai', 'help'],
         'viewer' => ['dashboard', 'content_view', 'help'],
     ];
