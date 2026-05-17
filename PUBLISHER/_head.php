@@ -3,6 +3,24 @@
 ?>
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+<meta name="color-scheme" content="light dark">
+
+<script>
+    (function() {
+        var storageKey = 'publisher-theme';
+        var storedTheme = null;
+        try {
+            storedTheme = localStorage.getItem(storageKey);
+        } catch (error) {
+            storedTheme = null;
+        }
+
+        var preferredTheme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        var theme = storedTheme === 'dark' || storedTheme === 'light' ? storedTheme : preferredTheme;
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+    })();
+</script>
 
 <link rel="icon" type="image/png" href="img/favicon.png" sizes="32x32">
 <link rel="icon" type="image/png" href="img/favicon.png" sizes="64x64">
@@ -24,6 +42,7 @@
 <link href="css/menu.css" rel="stylesheet" type="text/css" />
 <link href="css/style.css" rel="stylesheet" type="text/css" />
 <link href="css/global_styles.css" rel="stylesheet" type="text/css" />
+<link href="css/theme.css" rel="stylesheet" type="text/css" />
 
 <!-- Latest font-awesome 4.7.0 -->
 <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.css" rel="stylesheet" type="text/css" />

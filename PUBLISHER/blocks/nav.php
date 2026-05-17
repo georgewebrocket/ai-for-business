@@ -148,6 +148,12 @@ if ($userInitials === '') {
                 <?php } ?>
 
                 <li>
+                    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle dark mode" title="Toggle dark mode">
+                        <span class="fa fa-moon-o theme-toggle-icon" aria-hidden="true"></span>
+                    </button>
+                </li>
+
+                <li>
                     <a class="modalBtn"
                        data-title="<?php echo func::tr('USER PREFERENCES', $lang, $t) ?>" data-width="1000" data-height="700"
                        data-href="user.php?id=<?php echo $userid; ?>" style="cursor: pointer">

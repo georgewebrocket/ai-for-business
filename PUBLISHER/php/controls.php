@@ -841,6 +841,7 @@ class richTextbox
         echo <<<EOT
         
         <script>
+        var publisherEditorTheme = window.PublisherTheme ? window.PublisherTheme.get() : (document.documentElement.getAttribute('data-theme') || 'light');
         tinymce.init({
           selector: '#$controlId',
             relative_urls : false,
@@ -851,7 +852,15 @@ class richTextbox
             plugins: 'code, link, lists, image, table',
             toolbar: 'undo redo | styleselect | bold italic | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | link image table | code',
             image_advtab: true,
-            content_css: 'https://{$myAppDomain}/admin/css/editor-styles.css'
+            skin: publisherEditorTheme === 'dark' ? 'oxide-dark' : 'oxide',
+            content_css: publisherEditorTheme === 'dark' ? ['dark', 'https://{$myAppDomain}/admin/css/editor-styles.css'] : ['default', 'https://{$myAppDomain}/admin/css/editor-styles.css'],
+            setup: function(editor) {
+                editor.on('init', function() {
+                    if (window.PublisherTheme) {
+                        window.PublisherTheme.refresh();
+                    }
+                });
+            }
         });
         </script>
         
