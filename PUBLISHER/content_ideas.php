@@ -10,6 +10,7 @@ require_once('php/controls.php');
 require_once('php/ai.php');
 require_once('php/ai-settings.php');
 require_once('php/editorial-context.php');
+require_once('php/publishing.php');
 
 publisher_require_permission('content');
 publisher_require_property();
@@ -25,8 +26,10 @@ $propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings)
 $contentIdeasGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'create_content_ideas', $propertyAiDefaults);
 $contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $contentIdeasGenerationDefaults);
 $contentGenerationSaved = publisher_ai_get_settings_section(is_array($propertySettings) ? $propertySettings : [], 'content_generation');
+$publishingConfig = publisher_ai_get_settings_section(is_array($propertySettings) ? $propertySettings : [], 'publishing');
 $textModelOptions = publisher_ai_text_model_options();
 $imageModelOptions = publisher_ai_image_model_options();
+$contentIdeaStatusOptions = ['suggested', 'accepted', 'rejected', 'converted'];
 
 function content_ideas_selected_ids($post) {
     $ids = [];
@@ -86,6 +89,29 @@ function content_ideas_decode_sections($sectionsJson, $summary) {
     return $sections;
 }
 
+function content_ideas_limit_text($text, $maxLength) {
+    $text = trim(preg_replace('/\s+/u', ' ', (string)$text));
+    if ($text === '') {
+        return '';
+    }
+    if (function_exists('mb_strlen') && mb_strlen($text, 'UTF-8') > $maxLength) {
+        return rtrim(mb_substr($text, 0, $maxLength, 'UTF-8'));
+    }
+    if (!function_exists('mb_strlen') && strlen($text) > $maxLength) {
+        return rtrim(substr($text, 0, $maxLength));
+    }
+    return $text;
+}
+
+function content_ideas_article_seo($idea) {
+    $metadata = json_decode((string)($idea['ai_response_json'] ?? ''), true);
+    $article = is_array($metadata) && isset($metadata['article']) && is_array($metadata['article']) ? $metadata['article'] : [];
+    return [
+        'meta_title' => content_ideas_limit_text($article['meta_title'] ?? ($idea['title'] ?? ''), 60),
+        'meta_description' => content_ideas_limit_text($article['meta_description'] ?? ($idea['summary'] ?? ''), 160),
+    ];
+}
+
 function content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext = []) {
     $sectionsJson = json_encode($sections, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $editorialContextBlock = editorial_context_prompt_block($editorialContext);
@@ -115,9 +141,16 @@ Return only clean HTML for this section. Use an h2 for the section title and par
 PROMPT;
 }
 
-function content_ideas_generate_section($idea, $section, $sections, $index, $editorialContext = [], $aiSettings = []) {
-    $ai = new ai(openai::$key);
+function content_ideas_generate_section($dbo, $idea, $section, $sections, $index, $editorialContext = [], $aiSettings = [], $userId = null) {
+    $ai = new ai(publisher_require_ai_api_key($dbo, (int)$idea['account_id']));
     $ai->text_model($aiSettings['text_model'] ?? 'gpt-5.2');
+    $ai->log_context($dbo, [
+        'account_id' => (int)$idea['account_id'],
+        'property_id' => (int)$idea['property_id'],
+        'content_idea_id' => (int)$idea['id'],
+        'action_type' => 'generate_article',
+        'created_by' => $userId,
+    ]);
     $ai->instructions('You are an expert editorial writer. Return only clean HTML for the requested section.');
     $ai->prompt(content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext));
     $response = $ai->send_request();
@@ -141,19 +174,27 @@ function content_ideas_safe_image_prompt($idea) {
 }
 
 function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSettings = []) {
+    $generationStartedAt = date('Y-m-d H:i:s');
     $sections = content_ideas_decode_sections($idea['sections'] ?? '', $idea['summary'] ?? '');
     $editorialContext = editorial_context_get($dbo, (int)$idea['account_id'], (int)$idea['property_id']);
     $bodyParts = [];
     foreach ($sections as $index => $section) {
-        $bodyParts[] = content_ideas_generate_section($idea, $section, $sections, $index + 1, $editorialContext, $aiSettings);
+        $bodyParts[] = content_ideas_generate_section($dbo, $idea, $section, $sections, $index + 1, $editorialContext, $aiSettings, $userId);
     }
 
     $imagePath = '';
     $safeImagePrompt = content_ideas_safe_image_prompt($idea);
     if ($safeImagePrompt !== '') {
         try {
-            $ai = new ai(openai::$key);
+            $ai = new ai(publisher_require_ai_api_key($dbo, (int)$idea['account_id']));
             $ai->image_model($aiSettings['image_model'] ?? 'gpt-image-1.5');
+            $ai->log_context($dbo, [
+                'account_id' => (int)$idea['account_id'],
+                'property_id' => (int)$idea['property_id'],
+                'content_idea_id' => (int)$idea['id'],
+                'action_type' => 'generate_article',
+                'created_by' => $userId,
+            ]);
             $ai->prompt($safeImagePrompt);
             $mediaDir = __DIR__ . DIRECTORY_SEPARATOR . 'media';
             $imagePath = $ai->create_image($mediaDir);
@@ -170,11 +211,12 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
     $now = date('Y-m-d H:i:s');
     $slug = content_ideas_slugify($idea['title']);
     $body = implode("\n\n", $bodyParts);
+    $seo = content_ideas_article_seo($idea);
 
     $dbo->execSQL(
         'INSERT INTO content_items
-         (account_id, property_id, content_type_id, source_idea_id, title, slug, summary, body, status, language, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+         (account_id, property_id, content_type_id, source_idea_id, title, slug, summary, meta_title, meta_description, body, status, language, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
             $idea['account_id'],
             $idea['property_id'],
@@ -183,6 +225,8 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
             $idea['title'],
             $slug,
             $idea['summary'],
+            $seo['meta_title'],
+            $seo['meta_description'],
             $body,
             'draft',
             $idea['language'],
@@ -196,6 +240,12 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
         throw new Exception('Content item was not created.');
     }
     $contentItemId = (int)$itemRows[0]['id'];
+    $dbo->execSQL(
+        'UPDATE ai_generation_logs
+         SET content_item_id = ?
+         WHERE account_id = ? AND property_id = ? AND content_idea_id = ? AND content_item_id IS NULL AND created_at >= ?',
+        [$contentItemId, (int)$idea['account_id'], (int)$idea['property_id'], (int)$idea['id'], $generationStartedAt]
+    );
 
     if ((int)($idea['category_id'] ?? 0) > 0) {
         $dbo->execSQL(
@@ -236,11 +286,13 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'generate_articles') {
     $selectedIds = content_ideas_selected_ids($_POST);
+    $generationMode = ($_POST['generation_mode'] ?? 'generate') === 'schedule' ? 'schedule' : 'generate';
     $postedAiSettings = [
         'text_model' => trim((string)($_POST['text_model'] ?? '')),
         'image_model' => trim((string)($_POST['image_model'] ?? '')),
     ];
-    $settingsToSave = [];
+    $settingsToSave = is_array($contentGenerationSaved) ? $contentGenerationSaved : [];
+    $settingsToSave['schedule_pending'] = $generationMode === 'schedule';
     if ($postedAiSettings['text_model'] !== '') {
         $settingsToSave['text_model'] = publisher_ai_normalize_text_model($postedAiSettings['text_model'], $contentGenerationDefaults['text_model']);
     }
@@ -254,6 +306,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     );
     if (!$selectedIds) {
         $errors[] = 'Please select at least one content idea.';
+    } elseif ($generationMode === 'schedule') {
+        $placeholders = implode(',', array_fill(0, count($selectedIds), '?'));
+        $params = array_merge(['accepted', date('Y-m-d H:i:s')], $selectedIds, [$accountId, $propertyId]);
+        $dbo->execSQL(
+            "UPDATE content_ideas SET status = ?, updated_at = ?
+             WHERE id IN ({$placeholders}) AND account_id = ? AND property_id = ? AND content_item_id IS NULL",
+            $params
+        );
+        $success = count($selectedIds) . ' content idea(s) scheduled for article generation.';
     } else {
         $createdCount = 0;
         foreach ($selectedIds as $ideaId) {
@@ -276,7 +337,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                 if ($postedAiSettings['image_model'] !== '') {
                     $ideaAiSettings['image_model'] = publisher_ai_normalize_image_model($postedAiSettings['image_model'], $ideaAiSettings['image_model']);
                 }
-                content_ideas_create_article_from_idea($dbo, $ideaRows[0], (int)$userid, $ideaAiSettings);
+                $contentItemId = content_ideas_create_article_from_idea($dbo, $ideaRows[0], (int)$userid, $ideaAiSettings);
+                if (($publishingConfig['mode'] ?? '') === 'automatic') {
+                    $channelId = (int)($publishingConfig['distribution_channel_id'] ?? 0);
+                    $wordpressStatus = in_array(($publishingConfig['wordpress_status'] ?? 'draft'), ['draft', 'publish'], true)
+                        ? $publishingConfig['wordpress_status']
+                        : 'draft';
+                    if ($channelId > 0) {
+                        try {
+                            publisher_publish_content_item($dbo, $contentItemId, $channelId, $accountId, $propertyId, ['default_status' => $wordpressStatus]);
+                        } catch (Exception $publishEx) {
+                            $errors[] = 'Content item #' . $contentItemId . ' WordPress publish failed: ' . $publishEx->getMessage();
+                        }
+                    }
+                }
                 $createdCount++;
             } catch (Exception $ex) {
                 $errors[] = 'Content idea #' . $ideaId . ': ' . $ex->getMessage();
@@ -288,19 +362,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'bulk_update_status') {
+    $selectedIds = content_ideas_selected_ids($_POST);
+    $newStatus = trim((string)($_POST['bulk_status'] ?? ''));
+
+    if (!$selectedIds) {
+        $errors[] = 'Please select at least one content idea.';
+    } elseif (!in_array($newStatus, $contentIdeaStatusOptions, true)) {
+        $errors[] = 'Please select a valid status.';
+    } else {
+        $placeholders = implode(',', array_fill(0, count($selectedIds), '?'));
+        $params = array_merge([$newStatus, date('Y-m-d H:i:s')], $selectedIds, [$accountId, $propertyId]);
+        $dbo->execSQL(
+            "UPDATE content_ideas
+             SET status = ?, updated_at = ?
+             WHERE id IN ({$placeholders}) AND account_id = ? AND property_id = ?",
+            $params
+        );
+        $success = count($selectedIds) . ' content idea(s) updated.';
+    }
+}
+
 $canAdd = TRUE;
 $canView = TRUE;
 
+$searchDefaults = [
+    'search_category_id' => 0,
+    'search_title' => '',
+    'search_date_d1' => '',
+    'search_date_d2' => '',
+    'search_status' => 0,
+];
+$_GET = array_merge($searchDefaults, $_GET);
+if (!in_array((string)$_GET['search_status'], ['0', 'suggested', 'accepted', 'rejected', 'converted'], true)) {
+    $_GET['search_status'] = 0;
+}
+
+$searchGet = $_GET;
+$searchGet['search_category_id'] = (int)$searchGet['search_category_id'];
+$searchGet['search_title'] = trim((string)$searchGet['search_title']) !== ''
+    ? $dbo->getConn()->quote('%' . trim((string)$searchGet['search_title']) . '%')
+    : '';
+
 $list = new LISTCONTROL($dbo,
     "SELECT ci.id, ci.title, ci.summary, ci.tags, ci.language, ci.tone, ci.status, ci.similarity_score, ci.created_at, ci.updated_at,
-            ctype.name AS content_type_name,
             cc.name AS category_name,
-            content_item.title AS content_item_title,
+            CASE
+                WHEN content_item.id IS NULL THEN ''
+                ELSE CONCAT('<a style=\"cursor:pointer\" class=\"modalBtn\" data-title=\"Content item\" data-href=\"content_item.php?id=', content_item.id, '&l=GR\" data-height=\"780\" data-width=\"1200\">', content_item.id, '</a>')
+            END AS content_item_link,
             u.name AS created_by_name
      FROM content_ideas ci
-     LEFT JOIN content_types ctype ON ctype.id = ci.content_type_id
      LEFT JOIN content_categories cc ON cc.id = ci.category_id
-     LEFT JOIN content_items content_item ON content_item.id = ci.content_item_id
+     LEFT JOIN content_items content_item ON content_item.id = ci.content_item_id AND content_item.account_id = ci.account_id AND content_item.property_id = ci.property_id
      LEFT JOIN users u ON u.id = ci.created_by
      WHERE ci.account_id = {$accountId} AND ci.property_id = {$propertyId}",
     [],
@@ -315,20 +429,53 @@ $list = new LISTCONTROL($dbo,
 $fields = [
     ["id", "text", "ID"],
     ["title", "text", "Title"],
-    ["content_type_name", "text", "Content type"],
     ["category_name", "text", "Category"],
     ["tags", "text", "Tags"],
     ["language", "text", "Language"],
     ["tone", "text", "Tone"],
     ["status", "text", "Status"],
-    ["content_item_title", "text", "Content item"],
+    ["content_item_link", "text", "Content item"],
     ["created_by_name", "text", "Created by"],
     ["updated_at", "text", "Updated"],
 ];
 
 $list->setFields($fields);
+$list->setSearch(
+    ["search_category_id", "search_title", "search_date", "search_status"],
+    ["combobox", "text", "datefromto", "combobox"],
+    ["Category", "Title", "Date", "Status"]
+);
+$list->setSearchFieldAttr("search_category_id", [
+    "SQL" => "SELECT id, name FROM content_categories WHERE account_id = {$accountId} AND property_id = {$propertyId} ORDER BY name",
+    "ID-FIELD" => "id",
+    "DESC-FIELD" => "name",
+    "READONLY" => "",
+    "CRITERIA" => " AND ci.category_id = [val] ",
+]);
+$list->setSearchFieldAttr("search_title", [
+    "SEARCH-TYPE" => "ANY",
+    "READONLY" => "",
+    "CRITERIA" => " AND ci.title LIKE [val] ",
+]);
+$list->setSearchFieldAttr("search_date", [
+    "READONLY" => "",
+    "CRITERIA" => " AND (ci.created_at >= '[val1]' AND ci.created_at <= '[val2]') ",
+]);
+$list->setSearchFieldAttr("search_status", [
+    "SQL" => "",
+    "ID-FIELD" => "id",
+    "DESC-FIELD" => "description",
+    "READONLY" => "",
+    "RS" => [
+        ["id" => "suggested", "description" => "suggested"],
+        ["id" => "accepted", "description" => "accepted"],
+                ["id" => "rejected", "description" => "rejected"],
+                ["id" => "converted", "description" => "converted"],
+    ],
+    "CRITERIA" => " AND ci.status = '[val]' ",
+]);
 $list->set_select("Select");
-$list->SearchList($_GET, TRUE, FALSE, "ci.created_at DESC", 1000);
+$list->SearchList($searchGet, TRUE, TRUE, "ci.created_at DESC", 50);
 
 ?>
 <!DOCTYPE html>
@@ -341,13 +488,23 @@ $list->SearchList($_GET, TRUE, FALSE, "ci.created_at DESC", 1000);
         function refresh() {
             window.location.href = "content_ideas.php";
         }
+
+        function submitContentIdeasAction(actionName) {
+            document.getElementById("content-ideas-action").value = actionName;
+            return true;
+        }
     </script>
     <style>
-        #grid { max-width:1200px; }
+        #grid { max-width:1300px; }
         .property-context { color:#52606d; margin-bottom:18px; }
         .batch-actions { margin:0 0 14px; display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
         .batch-actions .model-field { min-width:220px; }
         .message-list { margin:0; padding-left:18px; }
+
+        #search_date_d1, #search_date_d2 {
+            width:45%;
+            display:inline-block;
+        }
     </style>
     <?php $list->refreshScript(); ?>
 </head>
@@ -367,9 +524,30 @@ $list->SearchList($_GET, TRUE, FALSE, "ci.created_at DESC", 1000);
             <div class="alert alert-success"><?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?></div>
         <?php } ?>
 
+        <?php
+        $list->searchForm();
+        $list->setSearch([], [], []);
+        ?>
+
         <form method="post" id="generate-articles-form">
-            <input type="hidden" name="action" value="generate_articles">
+            <input type="hidden" name="action" id="content-ideas-action" value="generate_articles">
             <div class="batch-actions">
+                <div class="model-field">
+                    <label for="bulk_status">Bulk status</label>
+                    <select class="form-control" id="bulk_status" name="bulk_status">
+                        <?php foreach ($contentIdeaStatusOptions as $statusOption) { ?>
+                            <option value="<?php echo htmlspecialchars($statusOption, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($statusOption, ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php } ?>
+                    </select>
+                </div>
+                <button class="btn btn-default" type="submit" onclick="return submitContentIdeasAction('bulk_update_status');">Update status</button>
+                <div class="model-field">
+                    <label for="generation_mode">Generation</label>
+                    <select class="form-control" id="generation_mode" name="generation_mode">
+                        <option value="generate" <?php echo empty($contentGenerationSaved['schedule_pending']) ? 'selected' : ''; ?>>Generate articles</option>
+                        <option value="schedule" <?php echo !empty($contentGenerationSaved['schedule_pending']) ? 'selected' : ''; ?>>Schedule article generation</option>
+                    </select>
+                </div>
                 <div class="model-field">
                     <label for="text_model">Text model</label>
                     <select class="form-control" id="text_model" name="text_model">
@@ -388,7 +566,7 @@ $list->SearchList($_GET, TRUE, FALSE, "ci.created_at DESC", 1000);
                         <?php } ?>
                     </select>
                 </div>
-                <button class="btn btn-primary" type="submit">Generate articles</button>
+                <button class="btn btn-primary" type="submit" onclick="return submitContentIdeasAction('generate_articles');">Continue</button>
             </div>
             <?php $list->ViewList("Open", 50, 1200, 780); ?>
         </form>

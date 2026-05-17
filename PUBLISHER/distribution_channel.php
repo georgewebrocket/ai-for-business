@@ -40,6 +40,8 @@ if ($id == 0) {
         'default_status' => 'draft',
         'author_id' => null,
         'category_ids' => [],
+        'seo_meta_title_keys' => ['_yoast_wpseo_title', 'rank_math_title'],
+        'seo_meta_description_keys' => ['_yoast_wpseo_metadesc', 'rank_math_description'],
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
 

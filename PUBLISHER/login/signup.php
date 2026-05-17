@@ -132,6 +132,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-control { height:42px; margin-bottom:12px; }
         .btn-primary { width:100%; height:42px; background:#185adb; border-color:#185adb; }
         .links { margin-top:16px; font-size:14px; }
+        .password-wrap { position:relative; }
+        .password-wrap .form-control { padding-right:72px; }
+        .toggle-password { position:absolute; right:8px; top:5px; height:32px; min-width:54px; border:0; background:#eef2f7; color:#243b53; border-radius:4px; font-size:12px; }
     </style>
 </head>
 <body>
@@ -162,10 +165,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <input class="form-control" type="email" id="email" name="email" value="<?php echo auth_h($email); ?>" required>
 
             <label for="password">Κωδικός</label>
-            <input class="form-control" type="password" id="password" name="password" minlength="8" required>
+            <div class="password-wrap">
+                <input class="form-control" type="password" id="password" name="password" minlength="8" required>
+                <button class="toggle-password" type="button" data-password-toggle="password" aria-label="Show password">Show</button>
+            </div>
 
             <label for="password_confirm">Επιβεβαίωση κωδικού</label>
-            <input class="form-control" type="password" id="password_confirm" name="password_confirm" minlength="8" required>
+            <div class="password-wrap">
+                <input class="form-control" type="password" id="password_confirm" name="password_confirm" minlength="8" required>
+                <button class="toggle-password" type="button" data-password-toggle="password_confirm" aria-label="Show password confirmation">Show</button>
+            </div>
 
             <button class="btn btn-primary" type="submit">Δημιουργία λογαριασμού</button>
         </form>
@@ -175,5 +184,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </section>
 </main>
+<script>
+    document.querySelectorAll('[data-password-toggle]').forEach(function(button) {
+        button.addEventListener('click', function() {
+            var input = document.getElementById(button.getAttribute('data-password-toggle'));
+            if (!input) return;
+            var show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            button.textContent = show ? 'Hide' : 'Show';
+            button.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        });
+    });
+</script>
 </body>
 </html>

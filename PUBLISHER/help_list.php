@@ -13,32 +13,21 @@ require_once('php/start.php');
 require_once('php/session.php');
 require_once ('php/controls.php');
 
-publisher_require_permission('help');
-
 $canAdd = TRUE; 
 $canView = TRUE;
 
-$t = [
-    'ID'         => ['en' => 'ID',         'gr' => 'ID'],
-    'TITLE'      => ['en' => 'TITLE',      'gr' => 'ΤΙΤΛΟΣ'],
-    'SHOW_ORDER' => ['en' => 'SHOW ORDER', 'gr' => 'ΣΕΙΡΑ ΕΜΦΑΝΙΣΗΣ'],
-];
 
-$lang = $user_language;
-
-
-$list = new LISTCONTROL($dbo, "SELECT id, title, title_en, show_order FROM help WHERE id > 0 ORDER BY show_order, id",
+$list = new LISTCONTROL($dbo, "SELECT * FROM help ORDER BY show_order, id", 
         array(), 
         array(), 
         array(),
-        "help-items.php", "help-item.php", "HELP ITEM",
+        "help_list.php", "help_item.php", "help",
         $canAdd, $canView);
 
 $fields = [
-    ["id", "text", func::tr('ID', $lang, $t)],
-    ["title", "text", func::tr('TITLE', $lang, $t)],
-    ["title_en", "text", "TITLE (en)"],
-    ["show_order", "text", func::tr('SHOW_ORDER', $lang, $t)],
+["id", "text", "ID"],
+["title", "text", "TITLE"],
+["show_order", "text", "SHOW_ORDER"]
 ];
 
 $list->setFields($fields);
@@ -94,7 +83,7 @@ $list->setRS($rs);
 <html xmlns="http://www.w3.org/1999/xhtml">
     <head>
         <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-        <title><?php echo app::$project_name; ?> - HELP</title>        
+        <title><?php echo app::$project_name; ?> - help</title>        
         
         <?php include "_head.php"; ?>
         
@@ -125,7 +114,7 @@ $list->setRS($rs);
         <?php include "blocks/header.php"; ?>
         
         <div class="padding-20">
-            <h1>HELP</h1>
+            <h1>Edit Help</h1>
             
             
             <?php
@@ -141,4 +130,3 @@ $list->setRS($rs);
     </body>
     
 </html>
-

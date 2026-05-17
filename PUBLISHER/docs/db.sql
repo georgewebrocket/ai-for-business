@@ -72,9 +72,31 @@ CREATE TABLE `ai_generation_logs` (
   `tokens_input` int(10) UNSIGNED DEFAULT NULL,
   `tokens_output` int(10) UNSIGNED DEFAULT NULL,
   `cost_estimate` decimal(10,4) DEFAULT NULL,
+  `duration_seconds` decimal(10,3) DEFAULT NULL,
   `status` enum('success','failed') DEFAULT 'success',
   `error_message` text DEFAULT NULL,
   `created_by` bigint(20) UNSIGNED DEFAULT NULL,
+  `created_at` datetime NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Δομή πίνακα για τον πίνακα `cron_job_runs`
+--
+
+CREATE TABLE `cron_job_runs` (
+  `id` bigint(20) UNSIGNED NOT NULL,
+  `job_name` varchar(100) NOT NULL,
+  `account_id` bigint(20) UNSIGNED DEFAULT NULL,
+  `property_id` bigint(20) UNSIGNED DEFAULT NULL,
+  `content_item_id` bigint(20) UNSIGNED DEFAULT NULL,
+  `content_idea_id` bigint(20) UNSIGNED DEFAULT NULL,
+  `status` enum('running','success','failed','skipped') DEFAULT 'running',
+  `started_at` datetime NOT NULL,
+  `finished_at` datetime DEFAULT NULL,
+  `duration_seconds` decimal(10,3) DEFAULT NULL,
+  `message` text DEFAULT NULL,
   `created_at` datetime NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 
@@ -177,6 +199,8 @@ CREATE TABLE `content_items` (
   `title` varchar(255) NOT NULL,
   `slug` varchar(255) DEFAULT NULL,
   `summary` text DEFAULT NULL,
+  `meta_title` varchar(60) DEFAULT NULL,
+  `meta_description` varchar(160) DEFAULT NULL,
   `body` longtext DEFAULT NULL,
   `status` enum('idea','draft','under_review','approved','scheduled','published','rejected','archived') DEFAULT 'draft',
   `language` varchar(10) DEFAULT 'el',
@@ -531,6 +555,17 @@ ALTER TABLE `ai_generation_logs`
   ADD KEY `created_by` (`created_by`);
 
 --
+-- Indexes for table `cron_job_runs`
+--
+ALTER TABLE `cron_job_runs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `account_id` (`account_id`),
+  ADD KEY `property_id` (`property_id`),
+  ADD KEY `content_item_id` (`content_item_id`),
+  ADD KEY `content_idea_id` (`content_idea_id`),
+  ADD KEY `idx_cron_job_runs_lookup` (`job_name`,`status`,`started_at`);
+
+--
 -- Ευρετήρια για πίνακα `ai_profiles`
 --
 ALTER TABLE `ai_profiles`
@@ -759,6 +794,12 @@ ALTER TABLE `ai_generation_logs`
   MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `cron_job_runs`
+--
+ALTER TABLE `cron_job_runs`
+  MODIFY `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT για πίνακα `ai_profiles`
 --
 ALTER TABLE `ai_profiles`
@@ -898,6 +939,15 @@ ALTER TABLE `ai_generation_logs`
   ADD CONSTRAINT `ai_generation_logs_ibfk_3` FOREIGN KEY (`content_item_id`) REFERENCES `content_items` (`id`),
   ADD CONSTRAINT `ai_generation_logs_ibfk_4` FOREIGN KEY (`content_idea_id`) REFERENCES `content_ideas` (`id`),
   ADD CONSTRAINT `ai_generation_logs_ibfk_5` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `cron_job_runs`
+--
+ALTER TABLE `cron_job_runs`
+  ADD CONSTRAINT `cron_job_runs_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `accounts` (`id`),
+  ADD CONSTRAINT `cron_job_runs_ibfk_2` FOREIGN KEY (`property_id`) REFERENCES `properties` (`id`),
+  ADD CONSTRAINT `cron_job_runs_ibfk_3` FOREIGN KEY (`content_item_id`) REFERENCES `content_items` (`id`),
+  ADD CONSTRAINT `cron_job_runs_ibfk_4` FOREIGN KEY (`content_idea_id`) REFERENCES `content_ideas` (`id`);
 
 --
 -- Περιορισμοί για πίνακα `ai_profiles`

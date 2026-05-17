@@ -151,7 +151,7 @@ $delRes = $itemControl->DeleteItem($_GET);
 </head>
 <body>
     <div class="padding-20">
-        <h1>Content idea</h1>
+        <!-- <h1>Content idea</h1> -->
         <p style="color:#52606d;">Property: <?php echo htmlspecialchars($current_property_name, ENT_QUOTES, 'UTF-8'); ?></p>
         <?php $itemControl->ViewItem($saveRes, $delRes); ?>
     </div>

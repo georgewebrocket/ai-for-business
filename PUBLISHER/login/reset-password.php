@@ -9,6 +9,7 @@ $emailStatus = '';
 $resetLink = '';
 $email = '';
 $token = $_GET['token'] ?? ($_POST['token'] ?? '');
+$isSetup = isset($_GET['setup']) || isset($_POST['setup']);
 $tokenUser = false;
 
 if ($token !== '') {
@@ -92,12 +93,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
         .btn-primary { width:100%; height:42px; background:#185adb; border-color:#185adb; }
         .links { margin-top:16px; font-size:14px; }
         .dev-link { word-break:break-all; font-size:13px; margin-top:12px; }
+        .password-wrap { position:relative; }
+        .password-wrap .form-control { padding-right:72px; }
+        .toggle-password { position:absolute; right:8px; top:5px; height:32px; min-width:54px; border:0; background:#eef2f7; color:#243b53; border-radius:4px; font-size:12px; }
     </style>
 </head>
 <body>
 <main class="auth-wrap">
     <section class="auth-box">
-        <h1>Password reset</h1>
+        <h1><?php echo $isSetup ? 'Set password' : 'Password reset'; ?></h1>
 
         <?php if ($errors) { ?>
             <div class="alert alert-danger"><?php echo auth_h(implode(' ', $errors)); ?></div>
@@ -120,14 +124,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
             <form method="post" action="reset-password.php" autocomplete="off">
                 <input type="hidden" name="action" value="reset">
                 <input type="hidden" name="token" value="<?php echo auth_h($token); ?>">
+                <?php if ($isSetup) { ?>
+                    <input type="hidden" name="setup" value="1">
+                <?php } ?>
 
-                <label for="password">New password</label>
-                <input class="form-control" type="password" id="password" name="password" minlength="8" required>
+                <label for="password"><?php echo $isSetup ? 'Password' : 'New password'; ?></label>
+                <div class="password-wrap">
+                    <input class="form-control" type="password" id="password" name="password" minlength="8" required>
+                    <button class="toggle-password" type="button" data-password-toggle="password" aria-label="Show password">Show</button>
+                </div>
 
                 <label for="password_confirm">Confirm password</label>
-                <input class="form-control" type="password" id="password_confirm" name="password_confirm" minlength="8" required>
+                <div class="password-wrap">
+                    <input class="form-control" type="password" id="password_confirm" name="password_confirm" minlength="8" required>
+                    <button class="toggle-password" type="button" data-password-toggle="password_confirm" aria-label="Show password confirmation">Show</button>
+                </div>
 
-                <button class="btn btn-primary" type="submit">Save password</button>
+                <button class="btn btn-primary" type="submit"><?php echo $isSetup ? 'Set password' : 'Save password'; ?></button>
             </form>
         <?php } else { ?>
             <form method="post" action="reset-password.php" autocomplete="on">
@@ -145,5 +158,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
         </div>
     </section>
 </main>
+<script>
+    document.querySelectorAll('[data-password-toggle]').forEach(function(button) {
+        button.addEventListener('click', function() {
+            var input = document.getElementById(button.getAttribute('data-password-toggle'));
+            if (!input) return;
+            var show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            button.textContent = show ? 'Hide' : 'Show';
+            button.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        });
+    });
+</script>
 </body>
 </html>

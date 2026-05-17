@@ -190,10 +190,10 @@ class RS_PAGE
                 }
 
                 //echo "<!--$sql-->";
-                $this->_countAllRows =count($rsCount);
+                $this->_countAllRows = is_array($rsCount) ? count($rsCount) : 0;
                 //$this->_countAllRows = $countRows;
                 //pages
-                $this->_countAll = ceil(count($rsCount)/$this->_nrOfRows);
+                $this->_countAll = ceil($this->_countAllRows / $this->_nrOfRows);
                 //$this->_countAll = ceil($countRows/$this->_nrOfRows);
             }
             else {

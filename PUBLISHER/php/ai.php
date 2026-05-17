@@ -4,7 +4,9 @@
 class ai
 {
 
-    protected $apiKey, $instructions, $prompt, $lang, $textModel = 'gpt-5.2', $imageModel = 'gpt-image-1.5';
+    protected $apiKey, $instructions, $prompt, $lang, $textModel = 'gpt-5.2', $imageModel = 'gpt-image-1.5', $logDbo = null, $logContext = [], $logRequestStartedAt = null;
+    protected static $humanWritingInstructions = 'Write as an experienced human writer with natural variation in structure, pacing, tone, and syntax. Avoid predictable AI writing patterns, repetitive phrasing, over-structured formatting, and generic vocabulary. Prioritize authenticity, readability, and stylistic diversity over mechanical consistency. Avoid em dashes, M-dashes, and other AI-like punctuation habits; use commas, parentheses, colons, or shorter sentences instead.';
+    protected static $validLogActionTypes = ['suggest_title', 'suggest_summary', 'generate_article', 'rewrite_article', 'generate_tags', 'generate_social_post', 'check_similarity'];
 
     public function __construct($apiKey) {
         $this->apiKey = $apiKey;
@@ -30,11 +32,113 @@ class ai
         $this->imageModel = trim((string)$val) !== '' ? trim((string)$val) : $this->imageModel;
     }
 
+    public function log_context($dbo, array $context = []) {
+        $this->logDbo = $dbo;
+        $this->logContext = $context;
+    }
+
+    private function request_instructions() {
+        $instructions = trim((string)$this->instructions);
+        $writingInstructions = self::$humanWritingInstructions;
+        if ($instructions === '') {
+            return $writingInstructions;
+        }
+        if (strpos($instructions, $writingInstructions) !== false) {
+            return $instructions;
+        }
+        return $instructions . "\n\n" . $writingInstructions;
+    }
+
+    private function log_action_type() {
+        $actionType = trim((string)($this->logContext['action_type'] ?? 'generate_article'));
+        return in_array($actionType, self::$validLogActionTypes, true) ? $actionType : 'generate_article';
+    }
+
+    private function estimate_text_cost($model, $inputTokens, $outputTokens) {
+        $model = strtolower(trim((string)$model));
+        $rates = [
+            'gpt-5.4' => ['input' => 1.25, 'output' => 10.00],
+            'gpt-5.3' => ['input' => 1.25, 'output' => 10.00],
+            'gpt-5.2' => ['input' => 1.25, 'output' => 10.00],
+            'gpt-5' => ['input' => 1.25, 'output' => 10.00],
+        ];
+        $rate = ['input' => 1.25, 'output' => 10.00];
+        foreach ($rates as $prefix => $candidate) {
+            if (strpos($model, $prefix) === 0) {
+                $rate = $candidate;
+                break;
+            }
+        }
+        return round((($inputTokens * $rate['input']) + ($outputTokens * $rate['output'])) / 1000000, 4);
+    }
+
+    private function estimate_image_cost($model) {
+        $model = strtolower(trim((string)$model));
+        $rates = [
+            'gpt-image-1.5' => 0.0700,
+            'gpt-image-1' => 0.0400,
+        ];
+        foreach ($rates as $prefix => $cost) {
+            if (strpos($model, $prefix) === 0) {
+                return $cost;
+            }
+        }
+        return 0.0000;
+    }
+
+    private function insert_generation_log($model, $prompt, $response, $tokensInput, $tokensOutput, $costEstimate, $status, $errorMessage = null, $durationSeconds = null) {
+        if (!$this->logDbo || empty($this->logContext['account_id'])) {
+            return;
+        }
+        if ($durationSeconds === null && $this->logRequestStartedAt !== null) {
+            $durationSeconds = round(microtime(true) - $this->logRequestStartedAt, 3);
+        }
+
+        try {
+            $this->logDbo->execSQL(
+                'INSERT INTO ai_generation_logs
+                 (account_id, property_id, content_item_id, content_idea_id, action_type, provider, model, prompt, response, tokens_input, tokens_output, cost_estimate, duration_seconds, status, error_message, created_by, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                    (int)$this->logContext['account_id'],
+                    isset($this->logContext['property_id']) && (int)$this->logContext['property_id'] > 0 ? (int)$this->logContext['property_id'] : null,
+                    isset($this->logContext['content_item_id']) && (int)$this->logContext['content_item_id'] > 0 ? (int)$this->logContext['content_item_id'] : null,
+                    isset($this->logContext['content_idea_id']) && (int)$this->logContext['content_idea_id'] > 0 ? (int)$this->logContext['content_idea_id'] : null,
+                    $this->log_action_type(),
+                    'openai',
+                    $model,
+                    $prompt,
+                    $response,
+                    $tokensInput !== null ? (int)$tokensInput : null,
+                    $tokensOutput !== null ? (int)$tokensOutput : null,
+                    $costEstimate !== null ? $costEstimate : null,
+                    $durationSeconds !== null ? $durationSeconds : null,
+                    $status,
+                    $errorMessage,
+                    isset($this->logContext['created_by']) && (int)$this->logContext['created_by'] > 0 ? (int)$this->logContext['created_by'] : null,
+                    date('Y-m-d H:i:s'),
+                ]
+            );
+        } catch (Throwable $ex) {
+        }
+    }
+
+    private function logged_text_prompt($instructions, $input) {
+        return json_encode([
+            'instructions' => $instructions,
+            'input' => $input,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+
     public function send_request() {
+        $this->logRequestStartedAt = microtime(true);
+        $requestInstructions = $this->request_instructions();
+        $requestPrompt = (string)$this->prompt;
+        $loggedPrompt = $this->logged_text_prompt($requestInstructions, $requestPrompt);
         $data = [
             "model" => $this->textModel,
-            "instructions" => (string)$this->instructions,
-            "input" => (string)$this->prompt,
+            "instructions" => $requestInstructions,
+            "input" => $requestPrompt,
             "reasoning" => [
                 "effort" => "medium"
             ],
@@ -59,6 +163,7 @@ class ai
             $err = curl_error($ch);
             curl_close($ch);
             $err_msg = json_encode(['error' => 'cURL error: ' . $err]);
+            $this->insert_generation_log($this->textModel, $loggedPrompt, null, null, null, null, 'failed', $err_msg);
             return [
                 'result' => 'error',
                 'message' => $err_msg,
@@ -78,6 +183,7 @@ class ai
                 'status' => $httpCode,
                 'message' => $message
             ]);
+            $this->insert_generation_log($this->textModel, $loggedPrompt, (string)$response, null, null, null, 'failed', $err_msg);
             return [
                 'result' => 'error',
                 'message' => $err_msg,
@@ -90,6 +196,7 @@ class ai
             $err_msg = json_encode([
                 'error' => 'Invalid JSON in response: ' . json_last_error_msg()
             ]);
+            $this->insert_generation_log($this->textModel, $loggedPrompt, (string)$response, null, null, null, 'failed', $err_msg);
             return [
                 'result' => 'error',
                 'message' => $err_msg,
@@ -105,6 +212,7 @@ class ai
                 'message' => $err['message'] ?? 'No message provided',
                 'code'    => $err['code']    ?? null
             ]);
+            $this->insert_generation_log($this->textModel, $loggedPrompt, json_encode($result, JSON_UNESCAPED_UNICODE), null, null, null, 'failed', $err_msg);
             return [
                 'result' => 'error',
                 'message' => $err_msg,
@@ -115,6 +223,7 @@ class ai
         $content = $this->extract_response_text($result);
         if ($content === '') {
             $err_msg = json_encode(['error' => 'Empty content in API response']);
+            $this->insert_generation_log($this->textModel, $loggedPrompt, json_encode($result, JSON_UNESCAPED_UNICODE), null, null, null, 'failed', $err_msg);
             return [
                 'result' => 'error',
                 'message' => $err_msg,
@@ -133,12 +242,18 @@ class ai
         $outputTokens = $result['usage']['output_tokens'] ?? 0;
         // Token usage returned by the Responses API.
         $totalTokens = $result['usage']['total_tokens'] ?? ($inputTokens + $outputTokens);
+        $costEstimate = $this->estimate_text_cost($this->textModel, $inputTokens, $outputTokens);
         $ai_cost = "<p>{$this->textModel} tokens: input {$inputTokens}, output {$outputTokens}, total {$totalTokens}</p>";
+        $this->insert_generation_log($this->textModel, $loggedPrompt, $ai_content, $inputTokens, $outputTokens, $costEstimate, 'success');
 
         $response = [
             "result" => 'success',
             "content" => $ai_content,
-            "cost" => $ai_cost
+            "cost" => $ai_cost,
+            "cost_estimate" => $costEstimate,
+            "tokens_input" => $inputTokens,
+            "tokens_output" => $outputTokens,
+            "tokens_total" => $totalTokens,
         ];
         return $response;
 
@@ -170,6 +285,7 @@ class ai
 
 
     private function generate_openai_image() {
+        $this->logRequestStartedAt = microtime(true);
         $endpoint = 'https://api.openai.com/v1/images/generations';
         $data = [
             "model" => $this->imageModel,
@@ -193,7 +309,9 @@ class ai
 
         $response = curl_exec($ch);
         if (curl_errno($ch)) {
-            throw new Exception('OpenAI API request error: ' . curl_error($ch));
+            $message = 'OpenAI API request error: ' . curl_error($ch);
+            $this->insert_generation_log($this->imageModel, (string)$this->prompt, null, null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
+            throw new Exception($message);
         }
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
@@ -201,17 +319,31 @@ class ai
         $body = json_decode($response, true);
         if ($httpCode < 200 || $httpCode >= 300) {
             $message = is_array($body) ? ($body['error']['message'] ?? 'Unexpected HTTP status: ' . $httpCode) : ('Unexpected HTTP status: ' . $httpCode);
+            $this->insert_generation_log($this->imageModel, (string)$this->prompt, (string)$response, null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
             throw new Exception('OpenAI image generation failed: ' . $message);
         }
         if (!is_array($body)) {
+            $message = 'Invalid OpenAI image generation response: ' . $response;
+            $this->insert_generation_log($this->imageModel, (string)$this->prompt, (string)$response, null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
             throw new Exception('Invalid OpenAI image generation response: ' . $response);
         }
 
         if (isset($body['data'][0]['b64_json'])) {
             $imageBytes = base64_decode($body['data'][0]['b64_json'], true);
             if ($imageBytes === false) {
+                $message = 'Failed to decode OpenAI image data.';
+                $this->insert_generation_log($this->imageModel, (string)$this->prompt, json_encode(['response_shape' => 'b64_json'], JSON_UNESCAPED_UNICODE), null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
                 throw new Exception('Failed to decode OpenAI image data.');
             }
+            $this->insert_generation_log(
+                $this->imageModel,
+                (string)$this->prompt,
+                json_encode(['response_shape' => 'b64_json', 'bytes' => strlen($imageBytes), 'mime_type' => 'image/' . ($body['output_format'] ?? 'jpeg')], JSON_UNESCAPED_UNICODE),
+                null,
+                null,
+                $this->estimate_image_cost($this->imageModel),
+                'success'
+            );
             return [
                 'data' => $imageBytes,
                 'type' => 'image/' . ($body['output_format'] ?? 'jpeg'),
@@ -219,14 +351,35 @@ class ai
         }
 
         if (isset($body['data'][0]['url'])) {
-            return $this->download_image_data($body['data'][0]['url']);
+            $image = $this->download_image_data($body['data'][0]['url']);
+            $this->insert_generation_log(
+                $this->imageModel,
+                (string)$this->prompt,
+                json_encode(['response_shape' => 'url', 'bytes' => strlen($image['data'] ?? ''), 'mime_type' => $image['type'] ?? null], JSON_UNESCAPED_UNICODE),
+                null,
+                null,
+                $this->estimate_image_cost($this->imageModel),
+                'success'
+            );
+            return $image;
         }
 
         if (isset($body['output'][0]['result'])) {
             $imageBytes = base64_decode($body['output'][0]['result'], true);
             if ($imageBytes === false) {
+                $message = 'Failed to decode OpenAI image data.';
+                $this->insert_generation_log($this->imageModel, (string)$this->prompt, json_encode(['response_shape' => 'output_result'], JSON_UNESCAPED_UNICODE), null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
                 throw new Exception('Failed to decode OpenAI image data.');
             }
+            $this->insert_generation_log(
+                $this->imageModel,
+                (string)$this->prompt,
+                json_encode(['response_shape' => 'output_result', 'bytes' => strlen($imageBytes), 'mime_type' => 'image/jpeg'], JSON_UNESCAPED_UNICODE),
+                null,
+                null,
+                $this->estimate_image_cost($this->imageModel),
+                'success'
+            );
             return [
                 'data' => $imageBytes,
                 'type' => 'image/jpeg',
@@ -238,8 +391,19 @@ class ai
                 if (($output['type'] ?? '') === 'image_generation_call' && isset($output['result'])) {
                     $imageBytes = base64_decode($output['result'], true);
                     if ($imageBytes === false) {
+                        $message = 'Failed to decode OpenAI image data.';
+                        $this->insert_generation_log($this->imageModel, (string)$this->prompt, json_encode(['response_shape' => 'image_generation_call'], JSON_UNESCAPED_UNICODE), null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
                         throw new Exception('Failed to decode OpenAI image data.');
                     }
+                    $this->insert_generation_log(
+                        $this->imageModel,
+                        (string)$this->prompt,
+                        json_encode(['response_shape' => 'image_generation_call', 'bytes' => strlen($imageBytes), 'mime_type' => 'image/jpeg'], JSON_UNESCAPED_UNICODE),
+                        null,
+                        null,
+                        $this->estimate_image_cost($this->imageModel),
+                        'success'
+                    );
                     return [
                         'data' => $imageBytes,
                         'type' => 'image/jpeg',
@@ -249,6 +413,8 @@ class ai
         }
 
         if (!isset($body['data'][0])) {
+            $message = 'Unexpected OpenAI response: ' . $response;
+            $this->insert_generation_log($this->imageModel, (string)$this->prompt, (string)$response, null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
             throw new Exception('Unexpected OpenAI response: ' . $response);
         }
 
@@ -257,7 +423,9 @@ class ai
         // echo "Completion tokens: {$usage['completion_tokens']}<br/>";
         // echo "Total tokens: {$usage['total_tokens']}<br/>";
 
-        throw new Exception('OpenAI image generation response did not include image data.');
+        $message = 'OpenAI image generation response did not include image data.';
+        $this->insert_generation_log($this->imageModel, (string)$this->prompt, (string)$response, null, null, $this->estimate_image_cost($this->imageModel), 'failed', $message);
+        throw new Exception($message);
 
     }
 

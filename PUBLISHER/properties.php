@@ -15,6 +15,9 @@ $message = '';
 if (isset($_GET['selected'])) {
     $message = 'Property selected.';
 }
+if (isset($_GET['deleted'])) {
+    $message = 'Property deleted.';
+}
 
 $properties = $dbo->getRS(
     'SELECT * FROM properties WHERE account_id = ? ORDER BY name',
@@ -111,11 +114,7 @@ $typeLabels = [
                 <h1>Properties</h1>
                 <div class="property-meta"><?php echo htmlspecialchars($current_account_name, ENT_QUOTES, 'UTF-8'); ?></div>
             </div>
-            <a class="btn btn-primary modalBtn"
-               data-title="New property"
-               data-width="950"
-               data-height="720"
-               data-href="property.php?id=0">New property</a>
+            <a class="btn btn-primary" href="property.php?id=0">New property</a>
         </div>
 
         <?php if ($message) { ?>
@@ -125,11 +124,7 @@ $typeLabels = [
         <?php if (!$properties) { ?>
             <div class="empty-state">
                 <p>No properties yet.</p>
-                <a class="btn btn-primary modalBtn"
-                   data-title="New property"
-                   data-width="950"
-                   data-height="720"
-                   data-href="property.php?id=0">Create first property</a>
+                <a class="btn btn-primary" href="property.php?id=0">Create first property</a>
             </div>
         <?php } else { ?>
             <div class="properties-grid">
@@ -157,11 +152,7 @@ $typeLabels = [
                                     <button class="btn btn-primary" type="submit">Use</button>
                                 </form>
                             <?php } ?>
-                            <a class="btn btn-default modalBtn"
-                               data-title="<?php echo htmlspecialchars($property['name'], ENT_QUOTES, 'UTF-8'); ?>"
-                               data-width="950"
-                               data-height="720"
-                               data-href="property.php?id=<?php echo (int)$property['id']; ?>">Manage</a>
+                            <a class="btn btn-default" href="property.php?id=<?php echo (int)$property['id']; ?>">Manage</a>
                             <?php if ($isCurrentProperty) { ?>
                                 <a class="btn btn-default" href="content_categories.php">Categories</a>
                             <?php } ?>

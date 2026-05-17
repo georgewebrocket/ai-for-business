@@ -11,14 +11,12 @@ require_once('php/start.php');
 require_once('php/session.php');
 require_once ('php/controls.php');
 
-publisher_require_permission('help');
-
-$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$id = $_GET['id'];
 $item = new help($dbo, $id);
 
 if ($id==0) {
     $rsNewHelpOrder = $dbo->getRS("SELECT IFNULL(MAX(show_order),0)+1 AS show_order FROM help");
-    $item->show_order($rsNewHelpOrder ? $rsNewHelpOrder[0]['show_order'] : 1);
+    $item->show_order($rsNewHelpOrder[0]['show_order']);
 }
 
 $canSave = TRUE;
@@ -28,7 +26,7 @@ $itemControl = new ITEMCONTROL($dbo, $item,
     array(), 
     array(), 
     array(),
-    "help-item.php", 
+    "help_item.php", 
     $canSave, $canDelete);
 
 $fields = [

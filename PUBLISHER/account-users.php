@@ -52,7 +52,7 @@ function account_users_membership($dbo, $accountId, $userId) {
 }
 
 function account_users_send_invitation($email, $name, $token) {
-    $link = auth_login_url('user-signup-confirm.php?token=' . urlencode($token));
+    $link = auth_login_url('user-signup-confirm.php?token=' . urlencode($token) . '&invite=1');
     $subject = 'ROCKET-AI Publisher - Account invitation';
     $message = "Hello " . $name . ",\n\n"
         . "You have been invited to ROCKET-AI Publisher.\n\n"

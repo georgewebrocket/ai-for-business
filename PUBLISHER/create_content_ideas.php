@@ -1,5 +1,8 @@
 <?php
 
+// ini_set('display_errors',1); 
+// error_reporting(E_ALL);
+
 require_once('php/config.php');
 require_once('php/db.php');
 require_once('php/dataobjects.php');
@@ -133,14 +136,26 @@ function cci_normalize_config($post, $aiDefaults = []) {
     $articleCount = max(1, min(50, (int)($post['article_count'] ?? 5)));
     $period = in_array(($post['period'] ?? 'week'), ['day', 'week', 'month'], true) ? $post['period'] : 'week';
     $mode = in_array(($post['mode'] ?? 'manual'), ['manual', 'automatic'], true) ? $post['mode'] : 'manual';
+    $executionMode = ($post['execution_mode'] ?? 'immediate') === 'schedule' ? 'schedule' : 'immediate';
+    $tagFrequency = (int)($post['frequent_tags_frequency_hours'] ?? 24);
+    if (!in_array($tagFrequency, [0, 6, 12, 24, 168], true)) {
+        $tagFrequency = 24;
+    }
     $mix = [];
 
     for ($i = 0; $i < $articleCount; $i++) {
+        $brief = trim((string)($post['article_brief'][$i] ?? ''));
+        if (function_exists('mb_substr')) {
+            $brief = mb_substr($brief, 0, 4000, 'UTF-8');
+        } else {
+            $brief = substr($brief, 0, 4000);
+        }
         $mix[] = [
             'content_category_id' => (int)($post['content_category_id'][$i] ?? 0),
             'writing_style_id' => (int)($post['writing_style_id'][$i] ?? 0),
             'content_template_id' => (int)($post['content_template_id'][$i] ?? 0),
             'image_style_id' => (int)($post['image_style_id'][$i] ?? 0),
+            'brief' => $brief,
         ];
     }
 
@@ -148,6 +163,10 @@ function cci_normalize_config($post, $aiDefaults = []) {
         'article_count' => $articleCount,
         'period' => $period,
         'mode' => $mode,
+        'schedule_pending' => $executionMode === 'schedule',
+        'schedule_remaining' => $executionMode === 'schedule' ? $articleCount : 0,
+        'schedule_cursor' => 0,
+        'frequent_tags_frequency_hours' => $tagFrequency,
         'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.2'), $aiDefaults['text_model'] ?? 'gpt-5.2'),
         'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-1.5'), $aiDefaults['image_model'] ?? 'gpt-image-1.5'),
         'mix' => $mix,
@@ -161,6 +180,7 @@ function cci_collect_mix_rows($dbo, $accountId, $propertyId, $mix) {
         $styleId = (int)($item['writing_style_id'] ?? 0);
         $templateId = (int)($item['content_template_id'] ?? 0);
         $imageStyleId = (int)($item['image_style_id'] ?? 0);
+        $brief = trim((string)($item['brief'] ?? ''));
 
         $category = $categoryId > 0 ? $dbo->getRS('SELECT id, name, description FROM content_categories WHERE id = ? AND account_id = ? AND property_id = ? LIMIT 1', [$categoryId, $accountId, $propertyId]) : [];
         $style = $styleId > 0 ? $dbo->getRS('SELECT id, name, tone, language, instructions FROM writing_styles WHERE id = ? AND account_id = ? AND property_id = ? LIMIT 1', [$styleId, $accountId, $propertyId]) : [];
@@ -173,16 +193,75 @@ function cci_collect_mix_rows($dbo, $accountId, $propertyId, $mix) {
             'writing_style' => $style ? $style[0] : null,
             'template' => $template ? $template[0] : null,
             'image_style' => $imageStyle ? $imageStyle[0] : null,
+            'brief' => $brief,
         ];
     }
     return $rows;
 }
 
-function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null, $editorialContext = []) {
+function cci_frequent_tags($dbo, $accountId, $propertyId, $limit = 20, $days = 90) {
+    $rows = $dbo->getRS(
+        'SELECT tags
+         FROM content_ideas
+         WHERE account_id = ? AND property_id = ?
+           AND tags IS NOT NULL AND tags <> ?
+           AND created_at >= ?',
+        [$accountId, $propertyId, '', date('Y-m-d H:i:s', strtotime("-{$days} days"))]
+    ) ?: [];
+
+    $counts = [];
+    foreach ($rows as $row) {
+        foreach (cci_normalize_text_list($row['tags'] ?? '') as $tag) {
+            $tag = preg_replace('/\s+/u', ' ', trim((string)$tag));
+            $key = function_exists('mb_strtolower') ? mb_strtolower($tag, 'UTF-8') : strtolower($tag);
+            if ($key !== '') {
+                $counts[$key] = ($counts[$key] ?? 0) + 1;
+            }
+        }
+    }
+
+    arsort($counts);
+    return array_slice($counts, 0, $limit, true);
+}
+
+function cci_frequent_tags_cache_expired($config) {
+    $frequencyHours = (int)($config['frequent_tags_frequency_hours'] ?? 24);
+    if ($frequencyHours <= 0) {
+        return true;
+    }
+
+    $cache = $config['frequent_tags_cache'] ?? [];
+    $generatedAt = is_array($cache) ? strtotime((string)($cache['generated_at'] ?? '')) : false;
+    if (!$generatedAt) {
+        return true;
+    }
+
+    return (time() - $generatedAt) >= ($frequencyHours * 3600);
+}
+
+function cci_get_cached_frequent_tags($dbo, $accountId, $propertyId, &$config) {
+    $cache = $config['frequent_tags_cache'] ?? [];
+    if (!cci_frequent_tags_cache_expired($config) && is_array($cache) && isset($cache['tags']) && is_array($cache['tags'])) {
+        return [$cache['tags'], false];
+    }
+
+    $tags = cci_frequent_tags($dbo, $accountId, $propertyId);
+    $config['frequent_tags_cache'] = [
+        'generated_at' => date('Y-m-d H:i:s'),
+        'days' => 90,
+        'limit' => 20,
+        'tags' => $tags,
+    ];
+
+    return [$tags, true];
+}
+
+function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null, $editorialContext = [], $frequentTags = []) {
     $count = $replacementCount !== null ? (int)$replacementCount : (int)$config['article_count'];
     $mixRows = array_slice($mixRows, 0, max(1, $count));
     $mixJson = json_encode($mixRows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $existingJson = json_encode(array_values($existingTitles), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    $frequentTagsJson = json_encode($frequentTags, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $editorialContextBlock = editorial_context_prompt_block($editorialContext);
 
     return <<<PROMPT
@@ -191,7 +270,13 @@ Create {$count} content ideas for property "{$propertyName}".
 Planning period: {$config['period']}.
 
 For each idea, follow the matching content_mix item by index. If fewer mix items are provided than requested ideas, reuse the mix items cyclically.
-For every idea, generate tags, language, writing instructions, sections, tone, and image_prompt.
+If the matching content_mix item includes a brief, use that brief as the primary direction for that specific idea. Respect it for topic focus, target audience, angle, constraints, writing guidance, image guidance, and things to avoid.
+If an item brief conflicts with category/style/template/image style, keep the selected content_mix fields but adapt the idea angle to the brief.
+For every idea, generate category_id, summary, meta_title, meta_description, tags, language, writing instructions, sections, tone, and image_prompt.
+The category_id must be the numeric id from the matching content_mix category. If the matching content_mix item has no category, return null.
+The summary will be used as the WordPress excerpt and must be a concise article summary.
+The meta_title must be SEO-friendly and no longer than 60 characters.
+The meta_description must be SEO-friendly, no longer than 160 characters, and written as a natural search snippet.
 Use the writing_style for language, tone, and instructions when available.
 Use the template structure for sections when available. Each section must include a suggested title, specific writing instructions for that section, and a recommended word count.
 Section titles must be specific to the article topic and must not use generic repeated labels such as "Introduction", "Main body", "Body", or "Conclusion".
@@ -204,6 +289,11 @@ Content mix:
 Avoid titles that are identical or too similar to these existing or rejected titles:
 {$existingJson}
 
+Frequently used tags for this property in recent content:
+{$frequentTagsJson}
+
+Avoid repeating content angles centered on these frequent tags. You may reuse a frequent tag only when the proposed idea has a clearly different audience, intent, format, search intent, or editorial angle.
+
 {$editorialContextBlock}
 
 Return only valid JSON with this exact shape:
@@ -211,8 +301,11 @@ Return only valid JSON with this exact shape:
   "articles": [
     {
       "title": "string",
+      "category_id": 123,
       "category": "string",
       "summary": "string",
+      "meta_title": "string",
+      "meta_description": "string",
       "tags": ["string"],
       "language": "string",
       "instructions": "string",
@@ -260,6 +353,20 @@ function cci_stringify_sections($value) {
     return trim((string)$value);
 }
 
+function cci_limit_text($text, $maxLength) {
+    $text = trim(preg_replace('/\s+/u', ' ', (string)$text));
+    if ($text === '') {
+        return '';
+    }
+    if (function_exists('mb_strlen') && mb_strlen($text, 'UTF-8') > $maxLength) {
+        return rtrim(mb_substr($text, 0, $maxLength, 'UTF-8'));
+    }
+    if (!function_exists('mb_strlen') && strlen($text) > $maxLength) {
+        return rtrim(substr($text, 0, $maxLength));
+    }
+    return $text;
+}
+
 function cci_parse_ai_articles($content) {
     $decoded = json_decode((string)$content, true);
     if (!is_array($decoded)) {
@@ -282,8 +389,11 @@ function cci_parse_ai_articles($content) {
         }
         $result[] = [
             'title' => $title,
+            'category_id' => isset($article['category_id']) ? (int)$article['category_id'] : 0,
             'category' => trim((string)($article['category'] ?? '')),
             'summary' => trim((string)($article['summary'] ?? '')),
+            'meta_title' => cci_limit_text($article['meta_title'] ?? $title, 60),
+            'meta_description' => cci_limit_text($article['meta_description'] ?? ($article['summary'] ?? ''), 160),
             'tags' => cci_normalize_text_list($article['tags'] ?? []),
             'language' => trim((string)($article['language'] ?? '')),
             'instructions' => trim((string)($article['instructions'] ?? '')),
@@ -297,12 +407,35 @@ function cci_parse_ai_articles($content) {
     return $result;
 }
 
-function cci_generate_articles($dbo, $accountId, $propertyId, $propertyName, $config, $existingTitles = [], $replacementCount = null, &$errors = []) {
+function cci_resolve_article_category_id($dbo, $accountId, $propertyId, $article, $mix) {
+    $categoryId = (int)($article['category_id'] ?? 0);
+    if ($categoryId <= 0) {
+        $categoryId = (int)($mix['content_category_id'] ?? 0);
+    }
+    if ($categoryId <= 0) {
+        return null;
+    }
+
+    $rows = $dbo->getRS(
+        'SELECT id FROM content_categories WHERE id = ? AND account_id = ? AND property_id = ? AND status = ? LIMIT 1',
+        [$categoryId, $accountId, $propertyId, 'active']
+    );
+    return $rows ? $categoryId : null;
+}
+
+function cci_generate_articles($dbo, $accountId, $propertyId, $propertyName, &$config, $existingTitles = [], $replacementCount = null, &$errors = [], $userId = null) {
     $mixRows = cci_collect_mix_rows($dbo, $accountId, $propertyId, $config['mix']);
     $editorialContext = editorial_context_get($dbo, $accountId, $propertyId);
-    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount, $editorialContext);
-    $ai = new ai(openai::$key);
+    [$frequentTags] = cci_get_cached_frequent_tags($dbo, $accountId, $propertyId, $config);
+    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount, $editorialContext, $frequentTags);
+    $ai = new ai(publisher_require_ai_api_key($dbo, $accountId));
     $ai->text_model($config['text_model'] ?? 'gpt-5.2');
+    $ai->log_context($dbo, [
+        'account_id' => $accountId,
+        'property_id' => $propertyId,
+        'action_type' => 'suggest_title',
+        'created_by' => $userId,
+    ]);
     $ai->instructions('You are an editorial planning assistant. Return only valid JSON, no markdown.');
     $ai->prompt($prompt);
     $response = $ai->send_request();
@@ -359,9 +492,12 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
         $instructions = (string)$writingStyle['instructions'];
     }
 
+    $categoryId = cci_resolve_article_category_id($dbo, $accountId, $propertyId, $article, $mix);
+
     $metadata = [
         'article' => $article,
         'content_mix' => $mix,
+        'brief' => $mix['brief'] ?? '',
         'ai_models' => [
             'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
             'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
@@ -380,7 +516,7 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
             $accountId,
             $propertyId,
             $contentTypeId,
-            (int)($mix['content_category_id'] ?? 0) ?: null,
+            $categoryId,
             $article['title'],
             $article['summary'] ?? '',
             $tags,
@@ -414,6 +550,7 @@ $defaultConfig = [
     'article_count' => 5,
     'period' => 'week',
     'mode' => 'manual',
+    'frequent_tags_frequency_hours' => 24,
     'text_model' => $propertyAiDefaults['text_model'],
     'image_model' => $propertyAiDefaults['image_model'],
     'mix' => [],
@@ -424,6 +561,13 @@ $config['image_model'] = publisher_ai_normalize_image_model($config['image_model
 if (!isset($config['mix']) || !is_array($config['mix'])) {
     $config['mix'] = [];
 }
+$legacyUserBrief = trim((string)($config['user_brief'] ?? ''));
+foreach ($config['mix'] as $mixIndex => $mixItem) {
+    if (is_array($mixItem) && !isset($mixItem['brief']) && $legacyUserBrief !== '') {
+        $config['mix'][$mixIndex]['brief'] = $legacyUserBrief;
+    }
+}
+unset($config['user_brief']);
 
 $categories = $dbo->getRS('SELECT id, name FROM content_categories WHERE account_id = ? AND property_id = ? ORDER BY name', [$accountId, $propertyId]) ?: [];
 $writingStyles = $dbo->getRS('SELECT id, name FROM writing_styles WHERE account_id = ? AND property_id = ? ORDER BY name', [$accountId, $propertyId]) ?: [];
@@ -441,15 +585,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'continue') {
         $config = cci_normalize_config($_POST, $propertyAiDefaults);
+        $config['created_by'] = $userId;
         $property['settings_json'] = cci_save_config($dbo, $propertyId, $accountId, $property['settings_json'] ?? '', $config);
         $success = 'Οι επιλογές αποθηκεύτηκαν.';
 
-        if ($config['mode'] === 'automatic') {
+        if (!empty($config['schedule_pending'])) {
             unset($_SESSION[$sessionKey]);
             $suggestions = [];
-            $success = 'Οι επιλογές αποθηκεύτηκαν για automatic δημιουργία από cron job.';
+            $success = 'Οι ρυθμίσεις αποθηκεύτηκαν. Το cron job θα δημιουργήσει τα content ideas σταδιακά.';
+        } elseif ($config['mode'] === 'automatic') {
+            unset($_SESSION[$sessionKey]);
+            $suggestions = [];
+            $success = 'Οι ρυθμίσεις αποθηκεύτηκαν για αυτόματη δημιουργία από cron job.';
         } else {
-            [$suggestions, $lastPrompt, $lastAiResponse] = cci_generate_articles($dbo, $accountId, $propertyId, $current_property_name, $config, [], null, $errors);
+            [$suggestions, $lastPrompt, $lastAiResponse] = cci_generate_articles($dbo, $accountId, $propertyId, $current_property_name, $config, [], null, $errors, $userId);
+            $property['settings_json'] = cci_save_config($dbo, $propertyId, $accountId, $property['settings_json'] ?? '', $config);
             $_SESSION[$sessionKey] = [
                 'config' => $config,
                 'articles' => $suggestions,
@@ -491,7 +641,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $mixIndex = max(1, (int)($article['content_mix_index'] ?? 1)) - 1;
                     $replacementConfig['mix'][] = $config['mix'][$mixIndex] ?? ($config['mix'][0] ?? []);
                 }
-                [$suggestions, $lastPrompt, $lastAiResponse] = cci_generate_articles($dbo, $accountId, $propertyId, $current_property_name, $replacementConfig, $newRejectedTitles, count($unselected), $errors);
+                [$suggestions, $lastPrompt, $lastAiResponse] = cci_generate_articles($dbo, $accountId, $propertyId, $current_property_name, $replacementConfig, $newRejectedTitles, count($unselected), $errors, $userId);
+                $property['settings_json'] = cci_save_config($dbo, $propertyId, $accountId, $property['settings_json'] ?? '', $replacementConfig);
                 $_SESSION[$sessionKey] = [
                     'config' => $replacementConfig,
                     'articles' => $suggestions,
@@ -531,11 +682,14 @@ function cci_options($rows, $selectedId) {
         .form-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; }
         .mix-card { border:1px solid #d9e2ec; border-radius:8px; padding:12px; margin-bottom:10px; background:#fff; }
         .mix-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; }
+        .mix-brief { margin-top:10px; }
+        .mix-brief textarea { min-height:86px; }
         .ideas-grid { width:100%; border-collapse:collapse; margin-top:14px; }
         .ideas-grid th, .ideas-grid td { border:1px solid #d9e2ec; padding:8px; vertical-align:top; }
         .ideas-grid th { background:#f7fafc; text-align:left; }
         .tag-list { color:#52606d; font-size:12px; }
         .error-list { margin:0; padding-left:18px; }
+        .field-hint { color:#52606d; font-size:12px; margin-top:4px; }
         @media (max-width:900px) {
             .form-grid, .mix-grid { grid-template-columns:1fr; }
         }
@@ -557,6 +711,7 @@ function cci_options($rows, $selectedId) {
 
         <form method="post" id="config-form">
             <input type="hidden" name="action" value="continue">
+            <input type="hidden" name="mode" value="<?php echo htmlspecialchars($config['mode'] ?? 'manual', ENT_QUOTES, 'UTF-8'); ?>">
             <div class="form-grid">
                 <div>
                     <label for="article_count">Αριθμός άρθρων</label>
@@ -571,10 +726,10 @@ function cci_options($rows, $selectedId) {
                     </select>
                 </div>
                 <div>
-                    <label for="mode">Mode</label>
-                    <select class="form-control" id="mode" name="mode">
-                        <option value="manual" <?php echo $config['mode'] === 'manual' ? 'selected' : ''; ?>>Manual</option>
-                        <option value="automatic" <?php echo $config['mode'] === 'automatic' ? 'selected' : ''; ?>>Automatic</option>
+                    <label for="execution_mode">Generation</label>
+                    <select class="form-control" id="execution_mode" name="execution_mode">
+                        <option value="immediate" <?php echo empty($config['schedule_pending']) ? 'selected' : ''; ?>>Άμεση δημιουργία</option>
+                        <option value="schedule" <?php echo !empty($config['schedule_pending']) ? 'selected' : ''; ?>>Schedule</option>
                     </select>
                 </div>
                 <div>
@@ -591,6 +746,16 @@ function cci_options($rows, $selectedId) {
                         <?php foreach ($imageModelOptions as $value => $label) { ?>
                             <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $config['image_model'] === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
                         <?php } ?>
+                    </select>
+                </div>
+                <div>
+                    <label for="frequent_tags_frequency_hours">Tag analysis</label>
+                    <select class="form-control" id="frequent_tags_frequency_hours" name="frequent_tags_frequency_hours">
+                        <option value="0" <?php echo (int)($config['frequent_tags_frequency_hours'] ?? 24) === 0 ? 'selected' : ''; ?>>Every generation</option>
+                        <option value="6" <?php echo (int)($config['frequent_tags_frequency_hours'] ?? 24) === 6 ? 'selected' : ''; ?>>Every 6 hours</option>
+                        <option value="12" <?php echo (int)($config['frequent_tags_frequency_hours'] ?? 24) === 12 ? 'selected' : ''; ?>>Every 12 hours</option>
+                        <option value="24" <?php echo (int)($config['frequent_tags_frequency_hours'] ?? 24) === 24 ? 'selected' : ''; ?>>Daily</option>
+                        <option value="168" <?php echo (int)($config['frequent_tags_frequency_hours'] ?? 24) === 168 ? 'selected' : ''; ?>>Weekly</option>
                     </select>
                 </div>
             </div>
@@ -689,6 +854,11 @@ function cci_options($rows, $selectedId) {
                             <label>Image style</label>
                             <select class="form-control" name="image_style_id[]">${options(imageStyles, row.image_style_id)}</select>
                         </div>
+                    </div>
+                    <div class="mix-brief">
+                        <label>Brief για αυτό το άρθρο</label>
+                        <textarea class="form-control" name="article_brief[]" maxlength="4000" placeholder="Προαιρετικά: θέμα, στόχος, κοινό, angle, keywords, κατεύθυνση εικόνας ή τι να αποφύγει το AI.">${escapeHtml(row.brief || '')}</textarea>
+                        <div class="field-hint">Αν συμπληρωθεί, το AI θα το χρησιμοποιήσει μόνο για το άρθρο ${index + 1}.</div>
                     </div>
                 `;
                 container.appendChild(card);

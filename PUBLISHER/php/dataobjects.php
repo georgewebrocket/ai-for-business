@@ -349,6 +349,7 @@ response
 tokens_input
 tokens_output
 cost_estimate
+duration_seconds
 status
 error_message
 created_by
@@ -357,7 +358,7 @@ created_at
 class ai_generation_logs extends publisher_data_object
 {
     protected static $_table = 'ai_generation_logs';
-    protected static $_columns = ['id', 'account_id', 'property_id', 'content_item_id', 'content_idea_id', 'action_type', 'provider', 'model', 'prompt', 'response', 'tokens_input', 'tokens_output', 'cost_estimate', 'status', 'error_message', 'created_by', 'created_at'];
+    protected static $_columns = ['id', 'account_id', 'property_id', 'content_item_id', 'content_idea_id', 'action_type', 'provider', 'model', 'prompt', 'response', 'tokens_input', 'tokens_output', 'cost_estimate', 'duration_seconds', 'status', 'error_message', 'created_by', 'created_at'];
     protected static $_primaryKey = ['id'];
     protected static $_autoIncrement = true;
 
@@ -426,6 +427,11 @@ class ai_generation_logs extends publisher_data_object
         $this->set('cost_estimate', $val);
     }
 
+    public function duration_seconds($val = NULL) {
+        if ($val === NULL) { return $this->get('duration_seconds'); }
+        $this->set('duration_seconds', $val);
+    }
+
     public function status($val = NULL) {
         if ($val === NULL) { return $this->get('status'); }
         $this->set('status', $val);
@@ -439,6 +445,90 @@ class ai_generation_logs extends publisher_data_object
     public function created_by($val = NULL) {
         if ($val === NULL) { return $this->get('created_by'); }
         $this->set('created_by', $val);
+    }
+
+    public function created_at($val = NULL) {
+        if ($val === NULL) { return $this->get('created_at'); }
+        $this->set('created_at', $val);
+    }
+
+}
+
+/*
+FIELDS
+id
+job_name
+account_id
+property_id
+content_item_id
+content_idea_id
+status
+started_at
+finished_at
+duration_seconds
+message
+created_at
+*/
+class cron_job_runs extends publisher_data_object
+{
+    protected static $_table = 'cron_job_runs';
+    protected static $_columns = ['id', 'job_name', 'account_id', 'property_id', 'content_item_id', 'content_idea_id', 'status', 'started_at', 'finished_at', 'duration_seconds', 'message', 'created_at'];
+    protected static $_primaryKey = ['id'];
+    protected static $_autoIncrement = true;
+
+    public function id($val = NULL) {
+        if ($val === NULL) { return $this->get('id'); }
+        $this->set('id', $val);
+    }
+
+    public function job_name($val = NULL) {
+        if ($val === NULL) { return $this->get('job_name'); }
+        $this->set('job_name', $val);
+    }
+
+    public function account_id($val = NULL) {
+        if ($val === NULL) { return $this->get('account_id'); }
+        $this->set('account_id', $val);
+    }
+
+    public function property_id($val = NULL) {
+        if ($val === NULL) { return $this->get('property_id'); }
+        $this->set('property_id', $val);
+    }
+
+    public function content_item_id($val = NULL) {
+        if ($val === NULL) { return $this->get('content_item_id'); }
+        $this->set('content_item_id', $val);
+    }
+
+    public function content_idea_id($val = NULL) {
+        if ($val === NULL) { return $this->get('content_idea_id'); }
+        $this->set('content_idea_id', $val);
+    }
+
+    public function status($val = NULL) {
+        if ($val === NULL) { return $this->get('status'); }
+        $this->set('status', $val);
+    }
+
+    public function started_at($val = NULL) {
+        if ($val === NULL) { return $this->get('started_at'); }
+        $this->set('started_at', $val);
+    }
+
+    public function finished_at($val = NULL) {
+        if ($val === NULL) { return $this->get('finished_at'); }
+        $this->set('finished_at', $val);
+    }
+
+    public function duration_seconds($val = NULL) {
+        if ($val === NULL) { return $this->get('duration_seconds'); }
+        $this->set('duration_seconds', $val);
+    }
+
+    public function message($val = NULL) {
+        if ($val === NULL) { return $this->get('message'); }
+        $this->set('message', $val);
     }
 
     public function created_at($val = NULL) {
@@ -830,6 +920,8 @@ source_idea_id
 title
 slug
 summary
+meta_title
+meta_description
 body
 status
 language
@@ -845,7 +937,7 @@ updated_at
 class content_items extends publisher_data_object
 {
     protected static $_table = 'content_items';
-    protected static $_columns = ['id', 'account_id', 'property_id', 'content_type_id', 'source_idea_id', 'title', 'slug', 'summary', 'body', 'status', 'language', 'writing_style_id', 'template_id', 'ai_profile_id', 'created_by', 'approved_by', 'published_at', 'created_at', 'updated_at'];
+    protected static $_columns = ['id', 'account_id', 'property_id', 'content_type_id', 'source_idea_id', 'title', 'slug', 'summary', 'meta_title', 'meta_description', 'body', 'status', 'language', 'writing_style_id', 'template_id', 'ai_profile_id', 'created_by', 'approved_by', 'published_at', 'created_at', 'updated_at'];
     protected static $_primaryKey = ['id'];
     protected static $_autoIncrement = true;
 
@@ -887,6 +979,16 @@ class content_items extends publisher_data_object
     public function summary($val = NULL) {
         if ($val === NULL) { return $this->get('summary'); }
         $this->set('summary', $val);
+    }
+
+    public function meta_title($val = NULL) {
+        if ($val === NULL) { return $this->get('meta_title'); }
+        $this->set('meta_title', $val);
+    }
+
+    public function meta_description($val = NULL) {
+        if ($val === NULL) { return $this->get('meta_description'); }
+        $this->set('meta_description', $val);
     }
 
     public function body($val = NULL) {
@@ -2156,5 +2258,210 @@ class writing_styles extends publisher_data_object
         if ($val === NULL) { return $this->get('updated_at'); }
         $this->set('updated_at', $val);
     }
+
+}
+
+
+/*
+FIELDS
+id
+key_code
+title
+key_value
+date_modified
+s_type
+account_id
+*/
+class settings extends publisher_data_object
+{
+    protected static $_table = 'settings';
+    protected static $_columns = ['id', 'key_code', 'title', 'key_value', 'date_modified', 's_type', 'account_id'];
+    protected static $_primaryKey = ['id'];
+    protected static $_autoIncrement = true;
+
+    public function id($val = NULL) {
+        if ($val === NULL) { return $this->get('id'); }
+        $this->set('id', $val);
+    }
+
+    public function key_code($val = NULL) {
+        if ($val === NULL) { return $this->get('key_code'); }
+        $this->set('key_code', $val);
+    }
+
+    public function title($val = NULL) {
+        if ($val === NULL) { return $this->get('title'); }
+        $this->set('title', $val);
+    }
+
+    public function key_value($val = NULL) {
+        if ($val === NULL) { return $this->get('key_value'); }
+        $this->set('key_value', $val);
+    }
+
+    public function date_modified($val = NULL) {
+        if ($val === NULL) { return $this->get('date_modified'); }
+        $this->set('date_modified', $val);
+    }
+
+    public function s_type($val = NULL) {
+        if ($val === NULL) { return $this->get('s_type'); }
+        $this->set('s_type', $val);
+    }
+
+    public function account_id($val = NULL) {
+        if ($val === NULL) { return $this->get('account_id'); }
+        $this->set('account_id', $val);
+    }
+}
+
+
+
+
+
+
+/*
+FIELDS
+id
+title
+content
+title_en
+content_en
+show_order
+*/
+class help
+{
+
+protected $_myconn, $_id, $_title, $_content, $_title_en, $_content_en, $_show_order ;
+
+protected $_rs;
+
+public function __construct($myconn, $_id, $my_rows = NULL, $_ssql = '') {
+    $all_rows = NULL;
+    $this->_id = $_id;
+    $this->_myconn = $myconn;
+    if ($my_rows==NULL) {
+        $ssql = "SELECT * FROM help WHERE id=?";
+        $all_rows = $this->_myconn->getRS($ssql, array($_id));
+        }
+    else if ($_ssql!='') {
+        $ssql = $_ssql;
+        $all_rows = $this->_myconn->getRS($ssql);
+        }
+    else {
+        $rows = $my_rows;
+        $all_rows = arrayfunctions::filter_by_value($rows, 'id', $this->_id);
+    }
+    $icount = $all_rows? count($all_rows): 0;
+
+    if ($all_rows) {
+        $this->_title = $all_rows[0]['title'];
+        $this->_content = $all_rows[0]['content'];
+        $this->_title_en = $all_rows[0]['title_en'];
+        $this->_content_en = $all_rows[0]['content_en'];
+        $this->_show_order = $all_rows[0]['show_order'];
+        $this->_rs = $all_rows;
+    }
+}
+
+public function get_id() {
+    return $this->_id;
+}
+
+public function set_id($val) {
+    $this->_id = $val;
+}
+
+public function get_rs() {
+    return $this->_rs;
+}
+
+public function title($val = NULL) {
+    if ($val === NULL) {        return $this->_title;
+    }
+    else {        $this->_title = $val;
+    }
+}
+
+public function content($val = NULL) {
+    if ($val === NULL) {        return $this->_content;
+    }
+    else {        $this->_content = $val;
+    }
+}
+
+public function title_en($val = NULL) {
+    if ($val === NULL) {        return $this->_title_en;
+    }
+    else {        $this->_title_en = $val;
+    }
+}
+
+public function content_en($val = NULL) {
+    if ($val === NULL) {        return $this->_content_en;
+    }
+    else {        $this->_content_en = $val;
+    }
+}
+
+public function show_order($val = NULL) {
+    if ($val === NULL) {        return $this->_show_order;
+    }
+    else {        $this->_show_order = $val;
+    }
+}
+
+public function Savedata() {
+    if ($this->_id==0) {
+    $ssql = "INSERT INTO help (
+    title,
+    content,
+    title_en,
+    content_en,
+    show_order
+    ) VALUES (?, ?, ?, ?, ?)";
+    $result = $this->_myconn->execSQL($ssql, array(
+        $this->_title,
+        $this->_content,
+        $this->_title_en,
+        $this->_content_en,
+        $this->_show_order));
+    $ssql = $this->_myconn->getLastIDsql('help');
+
+        $newrows = $this->_myconn->getRS($ssql);
+        $this->_id = $newrows[0]['id'];
+    }
+    else {
+        $ssql = "UPDATE help set
+        title = ?,
+        content = ?,
+        title_en = ?,
+        content_en = ?,
+        show_order = ?
+        WHERE id = ?";
+        $result = $this->_myconn->execSQL($ssql, array(
+        $this->_title,
+        $this->_content,
+        $this->_title_en,
+        $this->_content_en,
+        $this->_show_order,
+        $this->_id));
+    }
+    if ($result===false) {
+        return false;
+    }
+    return true;
+}
+
+public function Delete() {
+    $ssql = "DELETE FROM help WHERE id=?";
+    $result = $this->_myconn->execSQL($ssql, array($this->_id));
+    if ($result===false) {
+        return false;
+    }
+else {
+    return true;
+}
+}
 
 }

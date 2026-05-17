@@ -19,6 +19,32 @@ function publisher_ai_image_model_options() {
     ];
 }
 
+function publisher_ai_api_key($dbo, $accountId) {
+    $accountId = (int)$accountId;
+    if ($accountId <= 0) {
+        return '';
+    }
+
+    $rows = $dbo->getRS(
+        'SELECT key_value
+         FROM settings
+         WHERE account_id = ? AND key_code = ?
+         ORDER BY id DESC
+         LIMIT 1',
+        [$accountId, 'ai-api-key']
+    );
+
+    return $rows ? trim((string)$rows[0]['key_value']) : '';
+}
+
+function publisher_require_ai_api_key($dbo, $accountId) {
+    $apiKey = publisher_ai_api_key($dbo, $accountId);
+    if ($apiKey === '') {
+        throw new Exception('AI API key is not configured for this account. Add a setting with key_code "ai-api-key".');
+    }
+    return $apiKey;
+}
+
 function publisher_ai_normalize_text_model($model, $default = 'gpt-5.2') {
     $model = trim((string)$model);
     $options = publisher_ai_text_model_options();

@@ -36,6 +36,46 @@ $statusOptions = [
     'inactive' => 'inactive',
 ];
 
+$aiProfileRows = $dbo->getRS(
+    'SELECT id, name FROM ai_profiles WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name',
+    [$current_account_id, $id]
+) ?: [];
+$writingStyleRows = $dbo->getRS(
+    'SELECT id, name FROM writing_styles WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name',
+    [$current_account_id, $id]
+) ?: [];
+$templateRows = $dbo->getRS(
+    'SELECT id, name FROM content_templates WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name',
+    [$current_account_id, $id]
+) ?: [];
+$imageStyleRows = $dbo->getRS(
+    'SELECT id, name FROM image_styles WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name',
+    [$current_account_id, $id]
+) ?: [];
+$categoryRows = $dbo->getRS(
+    'SELECT id, name FROM content_categories WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name',
+    [$current_account_id, $id]
+) ?: [];
+$wordpressChannelRows = $id > 0 ? ($dbo->getRS(
+    'SELECT id, name FROM distribution_channels WHERE account_id = ? AND property_id = ? AND type = ? AND status = ? ORDER BY name',
+    [$current_account_id, $id, 'wordpress', 'active']
+) ?: []) : [];
+
+$settingsSelectOptions = [
+    'default_ai_profile_id' => $aiProfileRows,
+    'ai_profile_id' => $aiProfileRows,
+    'default_writing_style_id' => $writingStyleRows,
+    'writing_style_id' => $writingStyleRows,
+    'default_template_id' => $templateRows,
+    'content_template_id' => $templateRows,
+    'template_id' => $templateRows,
+    'default_image_style_id' => $imageStyleRows,
+    'image_style_id' => $imageStyleRows,
+    'default_category_id' => $categoryRows,
+    'content_category_id' => $categoryRows,
+    'category_id' => $categoryRows,
+];
+
 $defaultSettings = [
     'branding' => [
         'brand_name' => $item->name() ?: 'My Brand',
@@ -63,6 +103,22 @@ $defaultSettings = [
         'provider' => 'openai',
         'default_style' => 'Photorealistic',
         'default_size' => '1792x1024',
+    ],
+    'create_content_ideas' => [
+        'mode' => 'manual',
+        'article_count' => 5,
+        'period' => 'week',
+    ],
+    'content_generation' => [
+        'mode' => 'manual',
+        'article_count' => 1,
+        'period' => 'day',
+    ],
+    'publishing' => [
+        'mode' => 'manual',
+        'distribution_channel_id' => 0,
+        'channel_type' => 'wordpress',
+        'wordpress_status' => 'draft',
     ],
     
 ];
@@ -207,6 +263,8 @@ if ($id == 0) {
 if (isset($_GET['delete']) && $_GET['delete'] == 1 && $id > 0) {
     $item->Delete();
     $deleted = true;
+    header('Location: properties.php?deleted=1');
+    exit;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
@@ -271,12 +329,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
     <title><?php echo app::$project_name; ?> - Property</title>
     <?php include "_head.php"; ?>
     <style>
-        body { background:#fff; }
-        .property-form { max-width:1100px; padding-bottom:50px; }
+        .property-page { max-width:1180px; padding-bottom:50px; }
+        .page-head { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px; }
+        .page-kicker { color:#52606d; margin-top:-8px; }
         .form-row { margin-bottom:12px; }
         .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         .form-grid .wide { grid-column:1 / -1; }
-        .builder-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:18px 0 12px; }
+        .builder-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 0 12px; }
+        .tab-pane { padding-top:18px; }
         .settings-section-card { border:1px solid #d9e2ec; border-radius:8px; padding:14px; margin-bottom:12px; background:#fff; box-shadow:0 6px 18px rgba(15,23,42,.05); }
         .settings-section-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
         .settings-section-title { font-weight:700; font-size:16px; }
@@ -286,90 +346,178 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
         .settings-option-row { border:1px solid #edf2f7; border-radius:8px; padding:12px; margin-bottom:10px; background:#fbfdff; }
         .settings-option-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; }
         .settings-option-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
-        .json-preview { background:#0f172a; color:#dbeafe; padding:14px; border-radius:8px; max-height:320px; overflow:auto; white-space:pre-wrap; }
-        .advanced-json { display:none; }
+        .operation-grid { display:grid; grid-template-columns:repeat(3, minmax(180px, 1fr)); gap:12px; align-items:end; }
+        .operation-card { border:1px solid #d9e2ec; border-radius:8px; padding:16px; margin-bottom:14px; background:#fff; box-shadow:0 6px 18px rgba(15,23,42,.05); }
+        .operation-card h3 { margin:0 0 12px; font-size:18px; }
+        .operation-hint { color:#52606d; margin-top:8px; }
+        .icon-btn { width:34px; height:30px; padding:5px 0; text-align:center; }
+        .page-head .icon-btn { width:38px; height:34px; padding-top:7px; }
+        .settings-empty { color:#52606d; padding:16px; border:1px dashed #bcccdc; border-radius:8px; background:#fbfdff; }
         .error-list { margin:0; padding-left:18px; }
         textarea.form-control { min-height:90px; font-family:Consolas, Monaco, monospace; }
         @media (max-width:800px) {
+            .page-head { flex-direction:column; }
             .form-grid { grid-template-columns:1fr; }
             .settings-section-grid { grid-template-columns:1fr; }
             .settings-option-grid { grid-template-columns:1fr; }
+            .operation-grid { grid-template-columns:1fr; }
             .settings-section-head { align-items:flex-start; flex-direction:column; }
         }
     </style>
 </head>
 <body>
-    <div class="padding-20 property-form">
-        <h1>Property</h1>
+    <?php include "blocks/header.php"; ?>
+
+    <div class="padding-20 property-page">
+        <div class="page-head">
+            <div>
+                <h1><?php echo $id > 0 ? htmlspecialchars((string)$item->name(), ENT_QUOTES, 'UTF-8') : 'New property'; ?></h1>
+                <div class="page-kicker">Manage the basic setup and editorial defaults for this property.</div>
+            </div>
+            <a class="btn btn-default icon-btn" href="properties.php" title="Back to properties" aria-label="Back to properties">
+                <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
+            </a>
+        </div>
         <?php if ($deleted) { ?>
             <div class="alert alert-success">Item was deleted.</div>
-            <script>if (parent && parent.SetDataRefresh) parent.SetDataRefresh(1);</script>
         <?php } else { ?>
             <?php if ($errors) { ?>
                 <div class="alert alert-danger"><ul class="error-list"><?php foreach ($errors as $error) { ?><li><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></li><?php } ?></ul></div>
             <?php } ?>
             <?php if ($success) { ?>
                 <div class="alert alert-success"><?php echo htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?></div>
-                <script>if (parent && parent.SetDataRefresh) parent.SetDataRefresh(1);</script>
             <?php } ?>
 
             <form id="property-form" class="item-form" action="property.php?id=<?php echo (int)$id; ?>" method="post">
-                <div class="form-grid">
-                    <div>
-                        <label for="name">Name</label>
-                        <input class="form-control" type="text" id="name" name="name" value="<?php echo htmlspecialchars((string)$item->name(), ENT_QUOTES, 'UTF-8'); ?>" required>
-                    </div>
-                    <div>
-                        <label for="type">Type</label>
-                        <select class="form-control" id="type" name="type">
-                            <?php foreach ($propertyTypes as $value => $label) { ?>
-                                <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->type() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
-                    <div class="wide">
-                        <label for="primary_url">Primary URL</label>
-                        <input class="form-control" type="text" id="primary_url" name="primary_url" value="<?php echo htmlspecialchars((string)$item->primary_url(), ENT_QUOTES, 'UTF-8'); ?>">
-                    </div>
-                    <div>
-                        <label for="default_language">Default language</label>
-                        <select class="form-control" id="default_language" name="default_language">
-                            <?php foreach ($languageOptions as $value => $label) { ?>
-                                <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->default_language() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="timezone">Timezone</label>
-                        <input class="form-control" type="text" id="timezone" name="timezone" value="<?php echo htmlspecialchars((string)$item->timezone(), ENT_QUOTES, 'UTF-8'); ?>" required>
-                    </div>
-                    <div>
-                        <label for="status">Status</label>
-                        <select class="form-control" id="status" name="status">
-                            <?php foreach ($statusOptions as $value => $label) { ?>
-                                <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->status() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
-                            <?php } ?>
-                        </select>
-                    </div>
-                </div>
+                <ul class="nav nav-tabs" role="tablist">
+                    <li role="presentation" class="active"><a href="#tab-basic" aria-controls="tab-basic" role="tab" data-toggle="tab">Basic</a></li>
+                    <li role="presentation"><a href="#tab-operation" aria-controls="tab-operation" role="tab" data-toggle="tab">Τρόπος λειτουργίας</a></li>
+                    <li role="presentation"><a href="#tab-settings" aria-controls="tab-settings" role="tab" data-toggle="tab">Settings</a></li>
+                </ul>
 
-                <div class="builder-head">
-                    <h3>Settings sections</h3>
-                    <div>
-                        <button class="btn btn-default" type="button" id="toggle-advanced">Advanced JSON</button>
-                        <button class="btn btn-primary" type="button" id="add-section">Add section</button>
+                <div class="tab-content">
+                    <div role="tabpanel" class="tab-pane active" id="tab-basic">
+                        <div class="form-grid">
+                            <div>
+                                <label for="name">Name</label>
+                                <input class="form-control" type="text" id="name" name="name" value="<?php echo htmlspecialchars((string)$item->name(), ENT_QUOTES, 'UTF-8'); ?>" required>
+                            </div>
+                            <div>
+                                <label for="type">Type</label>
+                                <select class="form-control" id="type" name="type">
+                                    <?php foreach ($propertyTypes as $value => $label) { ?>
+                                        <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->type() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+                                    <?php } ?>
+                                </select>
+                            </div>
+                            <div class="wide">
+                                <label for="primary_url">Primary URL</label>
+                                <input class="form-control" type="text" id="primary_url" name="primary_url" value="<?php echo htmlspecialchars((string)$item->primary_url(), ENT_QUOTES, 'UTF-8'); ?>">
+                            </div>
+                            <div>
+                                <label for="default_language">Default language</label>
+                                <select class="form-control" id="default_language" name="default_language">
+                                    <?php foreach ($languageOptions as $value => $label) { ?>
+                                        <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->default_language() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+                                    <?php } ?>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="timezone">Timezone</label>
+                                <input class="form-control" type="text" id="timezone" name="timezone" value="<?php echo htmlspecialchars((string)$item->timezone(), ENT_QUOTES, 'UTF-8'); ?>" required>
+                            </div>
+                            <div>
+                                <label for="status">Status</label>
+                                <select class="form-control" id="status" name="status">
+                                    <?php foreach ($statusOptions as $value => $label) { ?>
+                                        <option value="<?php echo htmlspecialchars($value, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $item->status() === $value ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+                                    <?php } ?>
+                                </select>
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                <div id="settings-sections"></div>
+                    <div role="tabpanel" class="tab-pane" id="tab-operation">
+                        <div class="operation-card">
+                            <h3>Δημιουργία content ideas</h3>
+                            <div class="operation-grid">
+                                <div>
+                                    <label for="op_ideas_mode">Τρόπος δημιουργίας</label>
+                                    <select class="form-control operation-control" id="op_ideas_mode">
+                                        <option value="automatic">Αυτόματα</option>
+                                        <option value="manual">Manually scheduled</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="operation-hint">Στο manually scheduled οι ιδέες παράγονται όταν ο χρήστης τις προγραμματίσει από τη σελίδα δημιουργίας content ideas.</div>
+                        </div>
 
-                <h3>JSON preview</h3>
-                <pre id="json-preview" class="json-preview"></pre>
+                        <div class="operation-card">
+                            <h3>Δημιουργία άρθρων</h3>
+                            <div class="operation-grid">
+                                <div>
+                                    <label for="op_articles_mode">Τρόπος δημιουργίας</label>
+                                    <select class="form-control operation-control" id="op_articles_mode">
+                                        <option value="automatic">Αυτόματα</option>
+                                        <option value="manual">Manually scheduled</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="op_articles_count">Πλήθος άρθρων</label>
+                                    <input class="form-control operation-control" type="number" min="1" max="50" id="op_articles_count" value="1">
+                                </div>
+                                <div>
+                                    <label for="op_articles_period">Συχνότητα</label>
+                                    <select class="form-control operation-control" id="op_articles_period">
+                                        <option value="day">Καθημερινά</option>
+                                        <option value="week">Κάθε εβδομάδα</option>
+                                        <option value="month">Κάθε μήνα</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
 
-                <div id="advanced-json" class="advanced-json">
-                    <h3>Raw JSON</h3>
-                    <textarea class="form-control" id="raw-json" style="min-height:260px;"></textarea>
-                    <button class="btn btn-default" type="button" id="apply-raw-json" style="margin-top:8px;">Apply raw JSON</button>
+                        <div class="operation-card">
+                            <h3>Δημοσίευση άρθρων</h3>
+                            <div class="operation-grid">
+                                <div>
+                                    <label for="op_publishing_channel_id">WordPress channel</label>
+                                    <select class="form-control operation-control" id="op_publishing_channel_id">
+                                        <option value="0">Χωρίς προεπιλεγμένο channel</option>
+                                        <?php foreach ($wordpressChannelRows as $channel) { ?>
+                                            <option value="<?php echo (int)$channel['id']; ?>"><?php echo htmlspecialchars($channel['name'], ENT_QUOTES, 'UTF-8'); ?></option>
+                                        <?php } ?>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="op_publishing_mode">Τρόπος δημοσίευσης</label>
+                                    <select class="form-control operation-control" id="op_publishing_mode">
+                                        <option value="automatic">Αυτόματα</option>
+                                        <option value="manual">Manually</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="op_wordpress_status">WordPress status</label>
+                                    <select class="form-control operation-control" id="op_wordpress_status">
+                                        <option value="draft">Draft</option>
+                                        <option value="publish">Publish</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="operation-hint">Το status αφορά το post που δημιουργείται στο WordPress. Το draft επιτρέπει τελικό έλεγχο μέσα στο WordPress πριν τη δημοσίευση.</div>
+                        </div>
+                    </div>
+
+                    <div role="tabpanel" class="tab-pane" id="tab-settings">
+                        <div class="builder-head">
+                            <!-- <h3>Settings</h3> -->
+                            <button class="btn btn-primary icon-btn" type="button" id="add-section" title="Add section" aria-label="Add section">
+                                <span class="glyphicon glyphicon-plus" aria-hidden="true"></span>
+                            </button>
+                        </div>
+                        <div id="settings-tabs"></div>
+                        <div id="settings-sections"></div>
+                    </div>
                 </div>
 
                 <input type="hidden" id="settings_json" name="settings_json">
@@ -384,9 +532,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
         <?php } ?>
     </div>
 
+    <div class="modal fade" id="section-type-modal" tabindex="-1" role="dialog" aria-labelledby="section-type-title">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="section-type-title">Choose section type</h4>
+                </div>
+                <div class="modal-body">
+                    <label for="new-section-type">Section type</label>
+                    <select class="form-control" id="new-section-type"></select>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirm-add-section">Add section</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <?php include "blocks/footer.php"; ?>
     <script>
         const defaultSettings = <?php echo json_encode($defaultSettings, JSON_UNESCAPED_UNICODE); ?>;
+        const settingsSelectOptions = <?php echo json_encode($settingsSelectOptions, JSON_UNESCAPED_UNICODE); ?>;
+        const hiddenSectionKeys = new Set(['create_content_ideas', 'content_generation', 'publishing']);
         let settingsSections = [];
 
         function slugify(text) {
@@ -431,6 +600,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
             return value;
         }
 
+        function getSelectOptions(optionKey) {
+            return settingsSelectOptions[optionKey] || [];
+        }
+
+        function renderValueControl(option, optionIndex) {
+            const choices = getSelectOptions(option.key);
+            if (choices.length) {
+                const currentValue = String(option.value || '0');
+                const optionsHtml = [
+                    `<option value="0"${currentValue === '0' || currentValue === '' ? ' selected' : ''}>None</option>`
+                ].concat(choices.map(choice => {
+                    const value = String(choice.id);
+                    const selected = value === currentValue ? ' selected' : '';
+                    return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(choice.name || ('ID ' + value))}</option>`;
+                })).join('');
+                return `<select class="form-control" data-option-index="${optionIndex}" data-option-field="value">${optionsHtml}</select>`;
+            }
+
+            if (/_id$/.test(option.key || '')) {
+                return `<input class="form-control" type="number" min="0" data-option-index="${optionIndex}" data-option-field="value" value="${escapeHtml(option.value || '')}">`;
+            }
+
+            return `<textarea class="form-control" data-option-index="${optionIndex}" data-option-field="value" required>${escapeHtml(option.value || '')}</textarea>`;
+        }
+
         function objectToSections(settings) {
             if (settings && Array.isArray(settings.sections)) {
                 return settings.sections.map(section => ({
@@ -470,6 +664,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
 
         function emptyOption() {
             return { title: '', key: '', keyTouched: false, value: '' };
+        }
+
+        function findSection(sectionKey) {
+            return settingsSections.find(section => section.key === sectionKey);
+        }
+
+        function sectionValues(sectionKey) {
+            const section = findSection(sectionKey);
+            const values = {};
+            if (!section || !Array.isArray(section.options)) {
+                return values;
+            }
+            section.options.forEach(option => {
+                if (option.key) {
+                    values[option.key] = parseValue(option.value);
+                }
+            });
+            return values;
+        }
+
+        function setSectionValues(sectionKey, title, values) {
+            let section = findSection(sectionKey);
+            if (!section) {
+                section = {
+                    title,
+                    key: sectionKey,
+                    keyTouched: true,
+                    options: []
+                };
+                settingsSections.push(section);
+            }
+            section.title = section.title || title;
+            section.key = sectionKey;
+            section.keyTouched = true;
+
+            Object.keys(values).forEach(key => {
+                let option = section.options.find(item => item.key === key);
+                if (!option) {
+                    option = {
+                        title: titleFromKey(key),
+                        key,
+                        keyTouched: true,
+                        value: ''
+                    };
+                    section.options.push(option);
+                }
+                option.value = valueToText(values[key]);
+            });
+        }
+
+        function setSelectValue(id, value, fallback) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const target = String(value ?? fallback ?? '');
+            const hasOption = Array.from(el.options).some(option => option.value === target);
+            el.value = hasOption ? target : String(fallback ?? '');
+        }
+
+        function renderOperationControls() {
+            const ideas = sectionValues('create_content_ideas');
+            const articles = sectionValues('content_generation');
+            const publishing = sectionValues('publishing');
+
+            setSelectValue('op_ideas_mode', ideas.mode, 'manual');
+            setSelectValue('op_articles_mode', articles.mode, 'manual');
+            document.getElementById('op_articles_count').value = Math.max(1, parseInt(articles.article_count || 1, 10));
+            setSelectValue('op_articles_period', articles.period, 'day');
+            setSelectValue('op_publishing_channel_id', publishing.distribution_channel_id, '0');
+            setSelectValue('op_publishing_mode', publishing.mode, 'manual');
+            setSelectValue('op_wordpress_status', publishing.wordpress_status, 'draft');
+        }
+
+        function syncOperationSettings() {
+            const ideas = sectionValues('create_content_ideas');
+            const articles = sectionValues('content_generation');
+            const publishing = sectionValues('publishing');
+            const articleCount = Math.max(1, Math.min(50, parseInt(document.getElementById('op_articles_count').value || '1', 10)));
+
+            setSectionValues('create_content_ideas', 'Create Content Ideas', {
+                ...ideas,
+                mode: document.getElementById('op_ideas_mode').value
+            });
+            setSectionValues('content_generation', 'Content Generation', {
+                ...articles,
+                mode: document.getElementById('op_articles_mode').value,
+                article_count: articleCount,
+                period: document.getElementById('op_articles_period').value
+            });
+            setSectionValues('publishing', 'Publishing', {
+                ...publishing,
+                mode: document.getElementById('op_publishing_mode').value,
+                distribution_channel_id: parseInt(document.getElementById('op_publishing_channel_id').value || '0', 10),
+                channel_type: 'wordpress',
+                wordpress_status: document.getElementById('op_wordpress_status').value
+            });
+        }
+
+        function availableSectionTypes() {
+            const existingKeys = new Set(settingsSections.map(section => section.key));
+            const defaults = Object.keys(defaultSettings || {})
+                .filter(key => !hiddenSectionKeys.has(key))
+                .map(key => ({
+                    key,
+                    title: titleFromKey(key),
+                    disabled: existingKeys.has(key)
+                }));
+            defaults.push({ key: '__custom__', title: 'Custom section', disabled: false });
+            return defaults;
+        }
+
+        function populateSectionTypeSelect() {
+            const select = document.getElementById('new-section-type');
+            select.innerHTML = availableSectionTypes().map(type => (
+                `<option value="${escapeHtml(type.key)}"${type.disabled ? ' disabled' : ''}>${escapeHtml(type.title)}${type.disabled ? ' (already added)' : ''}</option>`
+            )).join('');
+            const firstAvailable = Array.from(select.options).find(option => !option.disabled);
+            if (firstAvailable) {
+                select.value = firstAvailable.value;
+            }
+        }
+
+        function addSectionByType(type) {
+            if (type === '__custom__') {
+                settingsSections.push(emptySection());
+                renderSections();
+                return;
+            }
+            if (!defaultSettings[type]) {
+                return;
+            }
+            const section = objectToSections({ [type]: defaultSettings[type] })[0];
+            if (!section) {
+                return;
+            }
+            settingsSections.push(section);
+            renderSections();
         }
 
         function updateSection(index, field, value) {
@@ -552,9 +882,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
 
         function renderSections() {
             const container = document.getElementById('settings-sections');
+            const tabs = document.getElementById('settings-tabs');
             container.innerHTML = '';
+            tabs.innerHTML = '';
 
-            settingsSections.forEach((section, index) => {
+            const visibleSections = settingsSections
+                .map((section, index) => ({ section, index }))
+                .filter(item => !hiddenSectionKeys.has(item.section.key));
+
+            if (!visibleSections.length) {
+                container.innerHTML = '<div class="settings-empty">No user-facing settings yet.</div>';
+                updateJsonFields();
+                return;
+            }
+
+            tabs.innerHTML = `
+                <ul class="nav nav-pills" role="tablist">
+                    ${visibleSections.map((item, position) => `
+                        <li role="presentation" class="${position === 0 ? 'active' : ''}">
+                            <a href="#settings-section-${item.index}" aria-controls="settings-section-${item.index}" role="tab" data-toggle="tab">${escapeHtml(item.section.title || item.section.key || 'Section')}</a>
+                        </li>
+                    `).join('')}
+                </ul>
+            `;
+
+            const tabContent = document.createElement('div');
+            tabContent.className = 'tab-content';
+            container.appendChild(tabContent);
+
+            visibleSections.forEach(({ section, index }, position) => {
+                const pane = document.createElement('div');
+                pane.className = 'tab-pane' + (position === 0 ? ' active' : '');
+                pane.id = `settings-section-${index}`;
                 const card = document.createElement('div');
                 card.className = 'settings-section-card';
                 const optionsHtml = section.options.map((option, optionIndex) => `
@@ -566,14 +925,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
                             </div>
                             <div>
                                 <label>Value</label>
-                                <textarea class="form-control" data-option-index="${optionIndex}" data-option-field="value" required>${escapeHtml(option.value || '')}</textarea>
+                                ${renderValueControl(option, optionIndex)}
                             </div>
                         </div>
                         <div class="settings-option-actions">
-                            <button class="btn btn-default btn-sm" type="button" data-option-index="${optionIndex}" data-option-action="up">Up</button>
-                            <button class="btn btn-default btn-sm" type="button" data-option-index="${optionIndex}" data-option-action="down">Down</button>
-                            <button class="btn btn-default btn-sm" type="button" data-option-index="${optionIndex}" data-option-action="duplicate">Duplicate</button>
-                            <button class="btn btn-danger btn-sm" type="button" data-option-index="${optionIndex}" data-option-action="delete">Delete</button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-option-index="${optionIndex}" data-option-action="up" title="Move up" aria-label="Move up"><span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span></button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-option-index="${optionIndex}" data-option-action="down" title="Move down" aria-label="Move down"><span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span></button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-option-index="${optionIndex}" data-option-action="duplicate" title="Duplicate" aria-label="Duplicate"><span class="glyphicon glyphicon-duplicate" aria-hidden="true"></span></button>
+                            <button class="btn btn-danger btn-sm icon-btn" type="button" data-option-index="${optionIndex}" data-option-action="delete" title="Delete" aria-label="Delete"><span class="glyphicon glyphicon-trash" aria-hidden="true"></span></button>
                         </div>
                     </div>
                 `).join('');
@@ -582,10 +941,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
                     <div class="settings-section-head">
                         <div class="settings-section-title">${index + 1}. ${section.title || section.key || 'Untitled section'}</div>
                         <div class="settings-section-actions">
-                            <button class="btn btn-default btn-sm" type="button" data-action="up">Up</button>
-                            <button class="btn btn-default btn-sm" type="button" data-action="down">Down</button>
-                            <button class="btn btn-default btn-sm" type="button" data-action="duplicate">Duplicate</button>
-                            <button class="btn btn-danger btn-sm" type="button" data-action="delete">Delete</button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-action="up" title="Move up" aria-label="Move up"><span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span></button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-action="down" title="Move down" aria-label="Move down"><span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span></button>
+                            <button class="btn btn-default btn-sm icon-btn" type="button" data-action="duplicate" title="Duplicate" aria-label="Duplicate"><span class="glyphicon glyphicon-duplicate" aria-hidden="true"></span></button>
+                            <button class="btn btn-danger btn-sm icon-btn" type="button" data-action="delete" title="Delete" aria-label="Delete"><span class="glyphicon glyphicon-trash" aria-hidden="true"></span></button>
                         </div>
                     </div>
                     <div class="settings-section-grid">
@@ -598,7 +957,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
                     <div class="settings-options">
                         <div class="builder-head" style="margin:10px 0;">
                             <h4>Options</h4>
-                            <button class="btn btn-primary btn-sm" type="button" data-action="add-option">Add option</button>
+                            <button class="btn btn-primary btn-sm icon-btn" type="button" data-action="add-option" title="Add option" aria-label="Add option"><span class="glyphicon glyphicon-plus" aria-hidden="true"></span></button>
                         </div>
                         ${optionsHtml || '<p style="color:#52606d;">No options yet.</p>'}
                     </div>
@@ -633,13 +992,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
                 });
                 card.querySelector('[data-action="duplicate"]').addEventListener('click', () => duplicateSection(index));
                 card.querySelector('[data-action="delete"]').addEventListener('click', () => deleteSection(index));
-                container.appendChild(card);
+                pane.appendChild(card);
+                tabContent.appendChild(pane);
             });
 
             updateJsonFields();
         }
 
         function buildSettings() {
+            syncOperationSettings();
             return {
                 sections: settingsSections.map(section => ({
                     title: (section.title || '').trim(),
@@ -684,38 +1045,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
 
         function updateJsonFields() {
             try {
-                const settings = buildSettings();
-                const json = JSON.stringify(settings, null, 2);
-                document.getElementById('json-preview').textContent = json;
-                document.getElementById('raw-json').value = json;
-                document.getElementById('settings_json').value = json;
+                document.getElementById('settings_json').value = JSON.stringify(buildSettings(), null, 2);
             } catch (error) {
-                document.getElementById('json-preview').textContent = 'Invalid section JSON: ' + error.message;
+                document.getElementById('settings_json').value = '';
             }
         }
 
         document.getElementById('add-section').addEventListener('click', () => {
-            settingsSections.push(emptySection());
-            renderSections();
+            populateSectionTypeSelect();
+            $('#section-type-modal').modal('show');
         });
 
-        document.getElementById('toggle-advanced').addEventListener('click', () => {
-            const advanced = document.getElementById('advanced-json');
-            advanced.style.display = advanced.style.display === 'block' ? 'none' : 'block';
-        });
-
-        document.getElementById('apply-raw-json').addEventListener('click', () => {
-            try {
-                const parsed = JSON.parse(document.getElementById('raw-json').value || '{}');
-                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                    alert('JSON must be a settings object.');
-                    return;
-                }
-                settingsSections = objectToSections(parsed);
-                renderSections();
-            } catch (error) {
-                alert('Invalid JSON: ' + error.message);
-            }
+        document.getElementById('confirm-add-section').addEventListener('click', () => {
+            addSectionByType(document.getElementById('new-section-type').value);
+            $('#section-type-modal').modal('hide');
         });
 
         document.getElementById('property-form').addEventListener('submit', event => {
@@ -728,6 +1071,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
             document.getElementById('settings_json').value = JSON.stringify(buildSettings(), null, 2);
         });
 
+        document.querySelectorAll('.operation-control').forEach(control => {
+            control.addEventListener('change', updateJsonFields);
+        });
+
         try {
             const initial = <?php echo json_encode($item->settings_json()); ?>;
             const parsed = JSON.parse(initial || '{}');
@@ -738,6 +1085,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
         if (!settingsSections.length) {
             settingsSections = objectToSections(defaultSettings);
         }
+        renderOperationControls();
         renderSections();
     </script>
 </body>

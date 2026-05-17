@@ -15,8 +15,24 @@ if (!$dbo) {
 
 if ($user) {
     $now = date('Y-m-d H:i:s');
+    $isInvitation = !empty($_GET['invite']);
+    if (!$isInvitation) {
+        $membershipRows = $dbo->getRS(
+            'SELECT id FROM account_users WHERE user_id = ? AND status = ? LIMIT 1',
+            [$user['id'], 'active']
+        );
+        $isInvitation = !empty($membershipRows);
+    }
+
     $dbo->execSQL('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', ['active', $now, $user['id']]);
     $dbo->execSQL('UPDATE account_users SET status = ?, updated_at = ? WHERE user_id = ?', ['active', $now, $user['id']]);
+    if ($isInvitation) {
+        $expires = time() + 3600;
+        $resetToken = auth_create_token($user, 'password_reset', $expires);
+        header('Location: reset-password.php?token=' . urlencode($resetToken) . '&setup=1');
+        exit;
+    }
+
     $message = 'Ο λογαριασμός σας ενεργοποιήθηκε.';
     $success = true;
 }
