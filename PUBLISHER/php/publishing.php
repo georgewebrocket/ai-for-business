@@ -13,6 +13,43 @@ function publisher_channel_settings($channel) {
     return publisher_json_decode_array($channel['settings_json'] ?? '');
 }
 
+function publisher_settings_section($settings, $sectionKey) {
+    if (isset($settings[$sectionKey]) && is_array($settings[$sectionKey])) {
+        return $settings[$sectionKey];
+    }
+    if (empty($settings['sections']) || !is_array($settings['sections'])) {
+        return [];
+    }
+    foreach ($settings['sections'] as $section) {
+        if (($section['key'] ?? '') !== $sectionKey || empty($section['options']) || !is_array($section['options'])) {
+            continue;
+        }
+        $values = [];
+        foreach ($section['options'] as $option) {
+            if (isset($option['key'])) {
+                $values[$option['key']] = $option['value'] ?? null;
+            }
+        }
+        return $values;
+    }
+    return [];
+}
+
+function publisher_property_brand_name($dbo, $accountId, $propertyId) {
+    $rows = $dbo->getRS(
+        'SELECT name, settings_json FROM properties WHERE id = ? AND account_id = ? LIMIT 1',
+        [(int)$propertyId, (int)$accountId]
+    );
+    if (!$rows) {
+        return '';
+    }
+
+    $settings = json_decode((string)($rows[0]['settings_json'] ?? ''), true);
+    $branding = publisher_settings_section(is_array($settings) ? $settings : [], 'branding');
+    $brandName = trim((string)($branding['brand_name'] ?? ''));
+    return $brandName !== '' ? $brandName : trim((string)($rows[0]['name'] ?? ''));
+}
+
 function publisher_normalize_base_url($url) {
     $url = trim((string)$url);
     $url = str_replace('\\/', '/', $url);
@@ -177,9 +214,76 @@ function publisher_wordpress_category_ids_by_slug($siteUrl, $auth, $categories) 
     return array_values(array_unique($ids));
 }
 
+function publisher_slugify($text) {
+    $text = trim((string)$text);
+    if ($text === '') {
+        return '';
+    }
+    if (function_exists('transliterator_transliterate')) {
+        $text = transliterator_transliterate('Any-Latin; Latin-ASCII; Lower()', $text);
+    } else {
+        $text = strtolower($text);
+    }
+    $text = preg_replace('/[^a-z0-9]+/i', '-', $text);
+    return strtolower(trim($text, '-'));
+}
+
+function publisher_content_item_tags($dbo, $contentItemId, $accountId, $propertyId) {
+    return $dbo->getRS(
+        'SELECT t.name, t.slug
+         FROM content_item_tags cit
+         INNER JOIN tags t ON t.id = cit.tag_id
+         WHERE cit.content_item_id = ? AND t.account_id = ? AND t.property_id = ?
+         ORDER BY t.name',
+        [$contentItemId, $accountId, $propertyId]
+    ) ?: [];
+}
+
+function publisher_wordpress_tag_ids($siteUrl, $auth, $tags) {
+    $ids = [];
+    foreach ($tags as $tag) {
+        $name = trim((string)($tag['name'] ?? ''));
+        $slug = trim((string)($tag['slug'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        if ($slug === '') {
+            $slug = publisher_slugify($name);
+        }
+        if ($slug === '') {
+            continue;
+        }
+
+        $matches = publisher_http_get_json(
+            $siteUrl . '/wp-json/wp/v2/tags?slug=' . rawurlencode($slug) . '&per_page=1',
+            [$auth]
+        );
+        if ($matches && isset($matches[0]['id'])) {
+            $ids[] = (int)$matches[0]['id'];
+            continue;
+        }
+
+        $created = publisher_http_json(
+            'POST',
+            $siteUrl . '/wp-json/wp/v2/tags',
+            [$auth],
+            ['name' => $name, 'slug' => $slug]
+        );
+        if (isset($created['id'])) {
+            $ids[] = (int)$created['id'];
+        }
+    }
+
+    return array_values(array_unique($ids));
+}
+
 function publisher_wordpress_seo_meta($item, $settings) {
     $metaTitle = publisher_limit_text($item['meta_title'] ?? ($item['title'] ?? ''), 60);
     $metaDescription = publisher_limit_text($item['meta_description'] ?? ($item['summary'] ?? ''), 160);
+    $brandName = trim((string)($settings['property_brand_name'] ?? ''));
+    if ($metaTitle !== '' && $brandName !== '' && stripos($metaTitle, $brandName) === false) {
+        $metaTitle .= ' | ' . $brandName;
+    }
     if ($metaTitle === '' && $metaDescription === '') {
         return [];
     }
@@ -265,6 +369,7 @@ function publisher_publication_insert($dbo, $item, $channelId, $status, $externa
 function publisher_publish_wordpress($dbo, $item, $channel) {
     $credentials = publisher_channel_credentials($channel);
     $settings = publisher_channel_settings($channel);
+    $settings['property_brand_name'] = publisher_property_brand_name($dbo, (int)$item['account_id'], (int)$item['property_id']);
     $siteUrl = publisher_normalize_base_url($credentials['site_url'] ?? '');
     $username = trim((string)($credentials['username'] ?? ''));
     $password = trim((string)($credentials['application_password'] ?? ''));
@@ -288,10 +393,11 @@ function publisher_publish_wordpress($dbo, $item, $channel) {
         $mediaId = $upload['id'] ?? null;
     }
 
+    $wordpressExcerpt = trim((string)($item['summary'] ?? ''));
     $payload = [
         'title' => $item['title'],
         'content' => $item['body'],
-        'excerpt' => $item['summary'],
+        'excerpt' => $wordpressExcerpt,
         'status' => $settings['default_status'] ?? 'draft',
         'slug' => $item['slug'],
     ];
@@ -304,6 +410,11 @@ function publisher_publish_wordpress($dbo, $item, $channel) {
         $payload['categories'] = $itemCategoryIds;
     } elseif (!empty($settings['category_ids']) && is_array($settings['category_ids'])) {
         $payload['categories'] = array_values(array_map('intval', $settings['category_ids']));
+    }
+    $itemTags = publisher_content_item_tags($dbo, (int)$item['id'], (int)$item['account_id'], (int)$item['property_id']);
+    $itemTagIds = $itemTags ? publisher_wordpress_tag_ids($siteUrl, $auth, $itemTags) : [];
+    if ($itemTagIds) {
+        $payload['tags'] = $itemTagIds;
     }
     if ($mediaId) {
         $payload['featured_media'] = (int)$mediaId;

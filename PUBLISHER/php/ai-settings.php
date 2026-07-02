@@ -2,6 +2,10 @@
 
 function publisher_ai_text_model_options() {
     return [
+        'gpt-5.5' => 'GPT-5.5',
+        'gpt-5.4' => 'GPT-5.4',
+        'gpt-5.4-mini' => 'GPT-5.4 Mini',
+        'gpt-5.4-nano' => 'GPT-5.4 Nano',
         'gpt-5.2' => 'GPT-5.2',
         'gpt-5.2-chat-latest' => 'GPT-5.2 Chat Latest',
         'gpt-5.2-pro' => 'GPT-5.2 Pro',
@@ -12,6 +16,7 @@ function publisher_ai_text_model_options() {
 
 function publisher_ai_image_model_options() {
     return [
+        'gpt-image-2' => 'GPT Image 2',
         'gpt-image-1.5' => 'GPT Image 1.5',
         'gpt-image-1' => 'GPT Image 1',
         'gpt-image-1-mini' => 'GPT Image 1 Mini',
@@ -45,13 +50,13 @@ function publisher_require_ai_api_key($dbo, $accountId) {
     return $apiKey;
 }
 
-function publisher_ai_normalize_text_model($model, $default = 'gpt-5.2') {
+function publisher_ai_normalize_text_model($model, $default = 'gpt-5.5') {
     $model = trim((string)$model);
     $options = publisher_ai_text_model_options();
     return isset($options[$model]) ? $model : $default;
 }
 
-function publisher_ai_normalize_image_model($model, $default = 'gpt-image-1.5') {
+function publisher_ai_normalize_image_model($model, $default = 'gpt-image-2') {
     $model = trim((string)$model);
     $options = publisher_ai_image_model_options();
     return isset($options[$model]) ? $model : $default;
@@ -77,6 +82,65 @@ function publisher_ai_get_settings_section($settings, $sectionKey) {
         return $values;
     }
     return [];
+}
+
+function publisher_ai_compact_setting_value($value) {
+    if (is_array($value)) {
+        $compacted = [];
+        foreach ($value as $key => $item) {
+            $item = publisher_ai_compact_setting_value($item);
+            if ($item !== null && $item !== '' && $item !== []) {
+                $compacted[$key] = $item;
+            }
+        }
+        return $compacted;
+    }
+
+    if (is_bool($value) || is_int($value) || is_float($value)) {
+        return $value;
+    }
+
+    return trim((string)$value);
+}
+
+function publisher_property_general_settings($settings) {
+    $settings = is_array($settings) ? $settings : [];
+    $context = [];
+    foreach (['branding', 'ai', 'seo'] as $sectionKey) {
+        $section = publisher_ai_get_settings_section($settings, $sectionKey);
+        $section = publisher_ai_compact_setting_value($section);
+        if (is_array($section) && $section) {
+            $context[$sectionKey] = $section;
+        }
+    }
+    return $context;
+}
+
+function publisher_property_general_settings_prompt_block($settings) {
+    $context = publisher_property_general_settings($settings);
+    if (!$context) {
+        return '';
+    }
+
+    $json = json_encode($context, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    return <<<PROMPT
+Property general settings (Branding, AI, SEO):
+Use these settings as property-level guidance. More specific content mix, writing style, template, brief, section, and safety instructions take precedence when they conflict.
+{$json}
+PROMPT;
+}
+
+function publisher_property_general_settings_prompt_block_from_db($dbo, $accountId, $propertyId) {
+    $rows = $dbo->getRS(
+        'SELECT settings_json FROM properties WHERE id = ? AND account_id = ? LIMIT 1',
+        [(int)$propertyId, (int)$accountId]
+    );
+    if (!$rows) {
+        return '';
+    }
+
+    $settings = json_decode((string)$rows[0]['settings_json'], true);
+    return publisher_property_general_settings_prompt_block(is_array($settings) ? $settings : []);
 }
 
 function publisher_ai_set_settings_section($settings, $sectionKey, $title, $values) {
@@ -111,16 +175,16 @@ function publisher_ai_set_settings_section($settings, $sectionKey, $title, $valu
 function publisher_property_ai_defaults($settings) {
     $ai = publisher_ai_get_settings_section(is_array($settings) ? $settings : [], 'ai');
     return [
-        'text_model' => publisher_ai_normalize_text_model($ai['default_text_model'] ?? $ai['text_model'] ?? 'gpt-5.2'),
-        'image_model' => publisher_ai_normalize_image_model($ai['default_image_model'] ?? $ai['image_model'] ?? 'gpt-image-1.5'),
+        'text_model' => publisher_ai_normalize_text_model($ai['default_text_model'] ?? $ai['text_model'] ?? 'gpt-5.5'),
+        'image_model' => publisher_ai_normalize_image_model($ai['default_image_model'] ?? $ai['image_model'] ?? 'gpt-image-2'),
     ];
 }
 
 function publisher_stage_ai_settings($settings, $sectionKey, $defaults) {
     $section = publisher_ai_get_settings_section(is_array($settings) ? $settings : [], $sectionKey);
     return [
-        'text_model' => publisher_ai_normalize_text_model($section['text_model'] ?? ($defaults['text_model'] ?? 'gpt-5.2'), $defaults['text_model'] ?? 'gpt-5.2'),
-        'image_model' => publisher_ai_normalize_image_model($section['image_model'] ?? ($defaults['image_model'] ?? 'gpt-image-1.5'), $defaults['image_model'] ?? 'gpt-image-1.5'),
+        'text_model' => publisher_ai_normalize_text_model($section['text_model'] ?? ($defaults['text_model'] ?? 'gpt-5.5'), $defaults['text_model'] ?? 'gpt-5.5'),
+        'image_model' => publisher_ai_normalize_image_model($section['image_model'] ?? ($defaults['image_model'] ?? 'gpt-image-2'), $defaults['image_model'] ?? 'gpt-image-2'),
     ];
 }
 
@@ -128,8 +192,8 @@ function publisher_idea_ai_settings($idea, $defaults) {
     $metadata = json_decode((string)($idea['ai_response_json'] ?? ''), true);
     $stored = is_array($metadata) ? ($metadata['ai_models'] ?? []) : [];
     return [
-        'text_model' => publisher_ai_normalize_text_model($stored['content_text_model'] ?? $stored['text_model'] ?? ($defaults['text_model'] ?? 'gpt-5.2'), $defaults['text_model'] ?? 'gpt-5.2'),
-        'image_model' => publisher_ai_normalize_image_model($stored['content_image_model'] ?? $stored['image_model'] ?? ($defaults['image_model'] ?? 'gpt-image-1.5'), $defaults['image_model'] ?? 'gpt-image-1.5'),
+        'text_model' => publisher_ai_normalize_text_model($stored['content_text_model'] ?? $stored['text_model'] ?? ($defaults['text_model'] ?? 'gpt-5.5'), $defaults['text_model'] ?? 'gpt-5.5'),
+        'image_model' => publisher_ai_normalize_image_model($stored['content_image_model'] ?? $stored['image_model'] ?? ($defaults['image_model'] ?? 'gpt-image-2'), $defaults['image_model'] ?? 'gpt-image-2'),
     ];
 }
 

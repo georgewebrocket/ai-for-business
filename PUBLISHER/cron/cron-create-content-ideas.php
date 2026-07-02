@@ -72,6 +72,12 @@ function cron_cci_period_start($period) {
     if ($period === 'day') {
         return date('Y-m-d 00:00:00');
     }
+    if ($period === 'two_weeks') {
+        return date('Y-m-d 00:00:00', strtotime('monday this week -1 week'));
+    }
+    if ($period === 'four_weeks') {
+        return date('Y-m-d 00:00:00', strtotime('monday this week -3 weeks'));
+    }
     if ($period === 'month') {
         return date('Y-m-01 00:00:00');
     }
@@ -175,14 +181,17 @@ function cron_cci_get_cached_frequent_tags($dbo, $accountId, $propertyId, &$conf
     return [$tags, true];
 }
 
-function cron_cci_build_prompt($propertyName, $config, $mixRows, $count, $existingTitles, $editorialContext = [], $frequentTags = []) {
+function cron_cci_build_prompt($propertyName, $config, $mixRows, $count, $existingTitles, $editorialContext = [], $frequentTags = [], $propertySettingsBlock = '') {
     $mixJson = json_encode(array_values($mixRows), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $existingJson = json_encode(array_values($existingTitles), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $frequentTagsJson = json_encode($frequentTags, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $editorialContextBlock = editorial_context_prompt_block($editorialContext);
+    $propertySettingsBlock = trim((string)$propertySettingsBlock);
     return <<<PROMPT
 Create {$count} content ideas for property "{$propertyName}".
 Planning period: {$config['period']}.
+
+{$propertySettingsBlock}
 
 Follow only the supplied content_mix item or items and return only valid JSON.
 If the matching content_mix item includes a brief, use that brief as the primary direction for that specific idea. Respect it for topic focus, target audience, angle, constraints, writing guidance, image guidance, and things to avoid.
@@ -319,6 +328,10 @@ function cron_cci_resolve_created_by($dbo, $accountId, $config) {
     return $rows ? (int)$rows[0]['user_id'] : null;
 }
 
+function cron_cci_review_required($config) {
+    return filter_var($config['review_required'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false;
+}
+
 function cron_cci_save_idea($dbo, $property, $config, $article, $prompt, $aiResponse) {
     $accountId = (int)$property['account_id'];
     $propertyId = (int)$property['id'];
@@ -367,16 +380,17 @@ function cron_cci_save_idea($dbo, $property, $config, $article, $prompt, $aiResp
         'content_mix' => $mix,
         'brief' => $mix['brief'] ?? '',
         'ai_models' => [
-            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
-            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
-            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
-            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
+            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
+            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
+            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
+            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
         ],
         'ai_response' => json_decode($aiResponse, true) ?: $aiResponse,
         'source' => 'cron-create-content-ideas',
     ];
     $now = date('Y-m-d H:i:s');
     $createdBy = cron_cci_resolve_created_by($dbo, $accountId, $config);
+    $status = cron_cci_review_required($config) ? 'suggested' : 'accepted';
 
     return $dbo->execSQL(
         'INSERT INTO content_ideas
@@ -398,7 +412,7 @@ function cron_cci_save_idea($dbo, $property, $config, $article, $prompt, $aiResp
             $prompt,
             json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
             null,
-            'suggested',
+            $status,
             $createdBy,
             null,
             $now,
@@ -438,7 +452,7 @@ foreach ($properties as $property) {
     $config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model']);
 
     $targetCount = $isQueued ? 1 : max(1, (int)($config['article_count'] ?? 1));
-    $period = in_array(($config['period'] ?? 'week'), ['day', 'week', 'month'], true) ? $config['period'] : 'week';
+    $period = in_array(($config['period'] ?? 'week'), ['day', 'week', 'two_weeks', 'four_weeks', 'month'], true) ? $config['period'] : 'week';
     $config['period'] = $period;
     $periodStart = cron_cci_period_start($period);
     if ($isQueued) {
@@ -478,10 +492,11 @@ foreach ($properties as $property) {
             [json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), date('Y-m-d H:i:s'), (int)$property['id'], (int)$property['account_id']]
         );
     }
-    $prompt = cron_cci_build_prompt($property['name'], $config, $selectedMixRows, $needed, $existingTitles, $editorialContext, $frequentTags);
+    $propertySettingsBlock = publisher_property_general_settings_prompt_block($settings);
+    $prompt = cron_cci_build_prompt($property['name'], $config, $selectedMixRows, $needed, $existingTitles, $editorialContext, $frequentTags, $propertySettingsBlock);
     $createdBy = cron_cci_resolve_created_by($dbo, (int)$property['account_id'], $config);
     $ai = new ai(publisher_require_ai_api_key($dbo, (int)$property['account_id']));
-    $ai->text_model($config['text_model'] ?? 'gpt-5.2');
+    $ai->text_model($config['text_model'] ?? 'gpt-5.5');
     $ai->log_context($dbo, [
         'account_id' => (int)$property['account_id'],
         'property_id' => (int)$property['id'],

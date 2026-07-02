@@ -4,7 +4,7 @@
 class ai
 {
 
-    protected $apiKey, $instructions, $prompt, $lang, $textModel = 'gpt-5.2', $imageModel = 'gpt-image-1.5', $logDbo = null, $logContext = [], $logRequestStartedAt = null;
+    protected $apiKey, $instructions, $prompt, $lang, $textModel = 'gpt-5.5', $imageModel = 'gpt-image-2', $logDbo = null, $logContext = [], $logRequestStartedAt = null;
     protected static $humanWritingInstructions = 'Write as an experienced human writer with natural variation in structure, pacing, tone, and syntax. Avoid predictable AI writing patterns, repetitive phrasing, over-structured formatting, and generic vocabulary. Prioritize authenticity, readability, and stylistic diversity over mechanical consistency. Avoid em dashes, M-dashes, and other AI-like punctuation habits; use commas, parentheses, colons, or shorter sentences instead.';
     protected static $validLogActionTypes = ['suggest_title', 'suggest_summary', 'generate_article', 'rewrite_article', 'generate_tags', 'generate_social_post', 'check_similarity'];
 
@@ -57,7 +57,10 @@ class ai
     private function estimate_text_cost($model, $inputTokens, $outputTokens) {
         $model = strtolower(trim((string)$model));
         $rates = [
-            'gpt-5.4' => ['input' => 1.25, 'output' => 10.00],
+            'gpt-5.5' => ['input' => 5.00, 'output' => 30.00],
+            'gpt-5.4-mini' => ['input' => 0.75, 'output' => 4.50],
+            'gpt-5.4-nano' => ['input' => 0.20, 'output' => 1.25],
+            'gpt-5.4' => ['input' => 2.50, 'output' => 15.00],
             'gpt-5.3' => ['input' => 1.25, 'output' => 10.00],
             'gpt-5.2' => ['input' => 1.25, 'output' => 10.00],
             'gpt-5' => ['input' => 1.25, 'output' => 10.00],
@@ -75,6 +78,7 @@ class ai
     private function estimate_image_cost($model) {
         $model = strtolower(trim((string)$model));
         $rates = [
+            'gpt-image-2' => 0.0700,
             'gpt-image-1.5' => 0.0700,
             'gpt-image-1' => 0.0400,
         ];

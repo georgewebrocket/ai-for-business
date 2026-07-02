@@ -136,7 +136,7 @@ function publisher_content_item_image_model($dbo, $accountId, $propertyId) {
     $propertySettings = $propertyRows ? json_decode((string)$propertyRows[0]['settings_json'], true) : [];
     $propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings) ? $propertySettings : []);
     $contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $propertyAiDefaults);
-    return $contentGenerationDefaults['image_model'] ?? 'gpt-image-1.5';
+    return $contentGenerationDefaults['image_model'] ?? 'gpt-image-2';
 }
 
 function publisher_content_item_source_defaults($dbo, $sourceIdeaId, $accountId, $propertyId) {
@@ -293,7 +293,7 @@ if ($isGenerateImageAction) {
         try {
             $safeImagePrompt = publisher_content_item_safe_image_prompt($imagePrompt);
             $imageModel = publisher_content_item_image_model($dbo, (int)$current_account_id, (int)$current_property_id);
-            $ai = new ai(publisher_require_ai_api_key($dbo, $accountId));
+            $ai = new ai(publisher_require_ai_api_key($dbo, (int)$current_account_id));
             $ai->image_model($imageModel);
             $ai->log_context($dbo, [
                 'account_id' => (int)$current_account_id,

@@ -85,8 +85,8 @@ $defaultSettings = [
     ],
     'ai' => [
         'default_ai_profile_id' => 0,
-        'default_text_model' => 'gpt-5.2',
-        'default_image_model' => 'gpt-image-1.5',
+        'default_text_model' => 'gpt-5.5',
+        'default_image_model' => 'gpt-image-2',
         'default_writing_style_id' => 0,
         'default_template_id' => 0,
         'default_language' => 'el',
@@ -106,6 +106,7 @@ $defaultSettings = [
     ],
     'create_content_ideas' => [
         'mode' => 'manual',
+        'review_required' => true,
         'article_count' => 5,
         'period' => 'week',
     ],
@@ -448,6 +449,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
                                         <option value="manual">Manually scheduled</option>
                                     </select>
                                 </div>
+                                <div>
+                                    <label for="op_ideas_review_required">Να γίνεται έλεγχος των content ideas από τον χρήστη</label>
+                                    <select class="form-control operation-control" id="op_ideas_review_required">
+                                        <option value="1">ΝΑΙ</option>
+                                        <option value="0">ΟΧΙ</option>
+                                    </select>
+                                </div>
                             </div>
                             <div class="operation-hint">Στο manually scheduled οι ιδέες παράγονται όταν ο χρήστης τις προγραμματίσει από τη σελίδα δημιουργίας content ideas.</div>
                         </div>
@@ -722,12 +730,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
             el.value = hasOption ? target : String(fallback ?? '');
         }
 
+        function isReviewRequired(value) {
+            return !(value === false || value === 0 || value === '0' || value === 'false');
+        }
+
         function renderOperationControls() {
             const ideas = sectionValues('create_content_ideas');
             const articles = sectionValues('content_generation');
             const publishing = sectionValues('publishing');
 
             setSelectValue('op_ideas_mode', ideas.mode, 'manual');
+            setSelectValue('op_ideas_review_required', isReviewRequired(ideas.review_required) ? '1' : '0', '1');
             setSelectValue('op_articles_mode', articles.mode, 'manual');
             document.getElementById('op_articles_count').value = Math.max(1, parseInt(articles.article_count || 1, 10));
             setSelectValue('op_articles_period', articles.period, 'day');
@@ -744,7 +757,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$deleted) {
 
             setSectionValues('create_content_ideas', 'Create Content Ideas', {
                 ...ideas,
-                mode: document.getElementById('op_ideas_mode').value
+                mode: document.getElementById('op_ideas_mode').value,
+                review_required: document.getElementById('op_ideas_review_required').value === '1'
             });
             setSectionValues('content_generation', 'Content Generation', {
                 ...articles,

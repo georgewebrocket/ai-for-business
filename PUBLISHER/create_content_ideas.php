@@ -123,6 +123,10 @@ function cci_decode_property_settings($json) {
 
 function cci_save_config($dbo, $propertyId, $accountId, $settingsJson, $config) {
     $settings = cci_decode_property_settings($settingsJson);
+    $existingConfig = cci_get_settings_section($settings, 'create_content_ideas');
+    if (is_array($existingConfig)) {
+        $config = array_merge($existingConfig, $config);
+    }
     $settings = cci_set_settings_section($settings, 'create_content_ideas', 'Create Content Ideas', $config);
     $encodedSettings = json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $dbo->execSQL(
@@ -132,9 +136,13 @@ function cci_save_config($dbo, $propertyId, $accountId, $settingsJson, $config) 
     return $encodedSettings;
 }
 
+function cci_review_required($config) {
+    return filter_var($config['review_required'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false;
+}
+
 function cci_normalize_config($post, $aiDefaults = []) {
     $articleCount = max(1, min(50, (int)($post['article_count'] ?? 5)));
-    $period = in_array(($post['period'] ?? 'week'), ['day', 'week', 'month'], true) ? $post['period'] : 'week';
+    $period = in_array(($post['period'] ?? 'week'), ['day', 'week', 'two_weeks', 'four_weeks', 'month'], true) ? $post['period'] : 'week';
     $mode = in_array(($post['mode'] ?? 'manual'), ['manual', 'automatic'], true) ? $post['mode'] : 'manual';
     $executionMode = ($post['execution_mode'] ?? 'immediate') === 'schedule' ? 'schedule' : 'immediate';
     $tagFrequency = (int)($post['frequent_tags_frequency_hours'] ?? 24);
@@ -163,12 +171,13 @@ function cci_normalize_config($post, $aiDefaults = []) {
         'article_count' => $articleCount,
         'period' => $period,
         'mode' => $mode,
+        'review_required' => filter_var($post['review_required'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false,
         'schedule_pending' => $executionMode === 'schedule',
         'schedule_remaining' => $executionMode === 'schedule' ? $articleCount : 0,
         'schedule_cursor' => 0,
         'frequent_tags_frequency_hours' => $tagFrequency,
-        'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.2'), $aiDefaults['text_model'] ?? 'gpt-5.2'),
-        'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-1.5'), $aiDefaults['image_model'] ?? 'gpt-image-1.5'),
+        'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.5'), $aiDefaults['text_model'] ?? 'gpt-5.5'),
+        'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-2'), $aiDefaults['image_model'] ?? 'gpt-image-2'),
         'mix' => $mix,
     ];
 }
@@ -256,18 +265,21 @@ function cci_get_cached_frequent_tags($dbo, $accountId, $propertyId, &$config) {
     return [$tags, true];
 }
 
-function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null, $editorialContext = [], $frequentTags = []) {
+function cci_build_prompt($propertyName, $config, $mixRows, $existingTitles = [], $replacementCount = null, $editorialContext = [], $frequentTags = [], $propertySettingsBlock = '') {
     $count = $replacementCount !== null ? (int)$replacementCount : (int)$config['article_count'];
     $mixRows = array_slice($mixRows, 0, max(1, $count));
     $mixJson = json_encode($mixRows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $existingJson = json_encode(array_values($existingTitles), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $frequentTagsJson = json_encode($frequentTags, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $editorialContextBlock = editorial_context_prompt_block($editorialContext);
+    $propertySettingsBlock = trim((string)$propertySettingsBlock);
 
     return <<<PROMPT
 Create {$count} content ideas for property "{$propertyName}".
 
 Planning period: {$config['period']}.
+
+{$propertySettingsBlock}
 
 For each idea, follow the matching content_mix item by index. If fewer mix items are provided than requested ideas, reuse the mix items cyclically.
 If the matching content_mix item includes a brief, use that brief as the primary direction for that specific idea. Respect it for topic focus, target audience, angle, constraints, writing guidance, image guidance, and things to avoid.
@@ -426,10 +438,11 @@ function cci_resolve_article_category_id($dbo, $accountId, $propertyId, $article
 function cci_generate_articles($dbo, $accountId, $propertyId, $propertyName, &$config, $existingTitles = [], $replacementCount = null, &$errors = [], $userId = null) {
     $mixRows = cci_collect_mix_rows($dbo, $accountId, $propertyId, $config['mix']);
     $editorialContext = editorial_context_get($dbo, $accountId, $propertyId);
+    $propertySettingsBlock = publisher_property_general_settings_prompt_block_from_db($dbo, $accountId, $propertyId);
     [$frequentTags] = cci_get_cached_frequent_tags($dbo, $accountId, $propertyId, $config);
-    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount, $editorialContext, $frequentTags);
+    $prompt = cci_build_prompt($propertyName, $config, $mixRows, $existingTitles, $replacementCount, $editorialContext, $frequentTags, $propertySettingsBlock);
     $ai = new ai(publisher_require_ai_api_key($dbo, $accountId));
-    $ai->text_model($config['text_model'] ?? 'gpt-5.2');
+    $ai->text_model($config['text_model'] ?? 'gpt-5.5');
     $ai->log_context($dbo, [
         'account_id' => $accountId,
         'property_id' => $propertyId,
@@ -499,15 +512,16 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
         'content_mix' => $mix,
         'brief' => $mix['brief'] ?? '',
         'ai_models' => [
-            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
-            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
-            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.2'),
-            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-1.5'),
+            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
+            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
+            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
+            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
         ],
         'ai_response' => json_decode($aiResponse, true) ?: $aiResponse,
     ];
 
     $now = date('Y-m-d H:i:s');
+    $status = cci_review_required($config) ? 'suggested' : 'accepted';
     return $dbo->execSQL(
         'INSERT INTO content_ideas
          (account_id, property_id, content_type_id, category_id, title, summary, tags, sections, tone, language, instructions, image_prompt, prompt, ai_response_json, similarity_score, status, created_by, content_item_id, created_at, updated_at)
@@ -528,7 +542,7 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
             $prompt,
             json_encode($metadata, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
             null,
-            'suggested',
+            $status,
             $userId > 0 ? $userId : null,
             null,
             $now,
@@ -550,6 +564,7 @@ $defaultConfig = [
     'article_count' => 5,
     'period' => 'week',
     'mode' => 'manual',
+    'review_required' => true,
     'frequent_tags_frequency_hours' => 24,
     'text_model' => $propertyAiDefaults['text_model'],
     'image_model' => $propertyAiDefaults['image_model'],
@@ -712,6 +727,7 @@ function cci_options($rows, $selectedId) {
         <form method="post" id="config-form">
             <input type="hidden" name="action" value="continue">
             <input type="hidden" name="mode" value="<?php echo htmlspecialchars($config['mode'] ?? 'manual', ENT_QUOTES, 'UTF-8'); ?>">
+            <input type="hidden" name="review_required" value="<?php echo cci_review_required($config) ? '1' : '0'; ?>">
             <div class="form-grid">
                 <div>
                     <label for="article_count">Αριθμός άρθρων</label>
@@ -722,6 +738,8 @@ function cci_options($rows, $selectedId) {
                     <select class="form-control" id="period" name="period">
                         <option value="day" <?php echo $config['period'] === 'day' ? 'selected' : ''; ?>>Ημέρα</option>
                         <option value="week" <?php echo $config['period'] === 'week' ? 'selected' : ''; ?>>Εβδομάδα</option>
+                        <option value="two_weeks" <?php echo $config['period'] === 'two_weeks' ? 'selected' : ''; ?>>2 εβδομάδες</option>
+                        <option value="four_weeks" <?php echo $config['period'] === 'four_weeks' ? 'selected' : ''; ?>>4 εβδομάδες</option>
                         <option value="month" <?php echo $config['period'] === 'month' ? 'selected' : ''; ?>>Μήνας</option>
                     </select>
                 </div>

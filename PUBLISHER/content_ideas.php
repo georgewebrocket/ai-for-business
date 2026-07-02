@@ -103,6 +103,65 @@ function content_ideas_limit_text($text, $maxLength) {
     return $text;
 }
 
+function content_ideas_tag_list($tags) {
+    if (is_array($tags)) {
+        $rawTags = $tags;
+    } else {
+        $decoded = json_decode((string)$tags, true);
+        $rawTags = is_array($decoded) ? $decoded : preg_split('/[,;\r\n]+/u', (string)$tags);
+    }
+
+    $result = [];
+    $seen = [];
+    foreach ($rawTags as $tag) {
+        $tag = preg_replace('/\s+/u', ' ', trim((string)$tag));
+        if ($tag === '') {
+            continue;
+        }
+        $key = function_exists('mb_strtolower') ? mb_strtolower($tag, 'UTF-8') : strtolower($tag);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $result[] = $tag;
+    }
+
+    return $result;
+}
+
+function content_ideas_attach_tags_to_content_item($dbo, $idea, $contentItemId) {
+    $tagNames = content_ideas_tag_list($idea['tags'] ?? '');
+    if (!$tagNames) {
+        return;
+    }
+
+    $now = date('Y-m-d H:i:s');
+    foreach ($tagNames as $tagName) {
+        $slug = content_ideas_slugify($tagName);
+        if ($slug === '') {
+            continue;
+        }
+
+        $tagRows = $dbo->getRS(
+            'SELECT id FROM tags WHERE account_id = ? AND property_id = ? AND slug = ? LIMIT 1',
+            [(int)$idea['account_id'], (int)$idea['property_id'], $slug]
+        );
+        $tagId = $tagRows ? (int)$tagRows[0]['id'] : 0;
+        if ($tagId <= 0) {
+            $tagId = (int)$dbo->execSQL(
+                'INSERT INTO tags (account_id, property_id, name, slug, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [(int)$idea['account_id'], (int)$idea['property_id'], $tagName, $slug, 'ai', $now, $now]
+            );
+        }
+        if ($tagId > 0) {
+            $dbo->execSQL(
+                'INSERT IGNORE INTO content_item_tags (content_item_id, tag_id, source) VALUES (?, ?, ?)',
+                [$contentItemId, $tagId, 'ai']
+            );
+        }
+    }
+}
+
 function content_ideas_article_seo($idea) {
     $metadata = json_decode((string)($idea['ai_response_json'] ?? ''), true);
     $article = is_array($metadata) && isset($metadata['article']) && is_array($metadata['article']) ? $metadata['article'] : [];
@@ -112,11 +171,14 @@ function content_ideas_article_seo($idea) {
     ];
 }
 
-function content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext = []) {
+function content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext = [], $propertySettingsBlock = '') {
     $sectionsJson = json_encode($sections, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     $editorialContextBlock = editorial_context_prompt_block($editorialContext);
+    $propertySettingsBlock = trim((string)$propertySettingsBlock);
     return <<<PROMPT
 Write section {$index} for a content article.
+
+{$propertySettingsBlock}
 
 Content idea:
 Title: {$idea['title']}
@@ -141,9 +203,9 @@ Return only clean HTML for this section. Use an h2 for the section title and par
 PROMPT;
 }
 
-function content_ideas_generate_section($dbo, $idea, $section, $sections, $index, $editorialContext = [], $aiSettings = [], $userId = null) {
+function content_ideas_generate_section($dbo, $idea, $section, $sections, $index, $editorialContext = [], $aiSettings = [], $userId = null, $propertySettingsBlock = '') {
     $ai = new ai(publisher_require_ai_api_key($dbo, (int)$idea['account_id']));
-    $ai->text_model($aiSettings['text_model'] ?? 'gpt-5.2');
+    $ai->text_model($aiSettings['text_model'] ?? 'gpt-5.5');
     $ai->log_context($dbo, [
         'account_id' => (int)$idea['account_id'],
         'property_id' => (int)$idea['property_id'],
@@ -152,7 +214,7 @@ function content_ideas_generate_section($dbo, $idea, $section, $sections, $index
         'created_by' => $userId,
     ]);
     $ai->instructions('You are an expert editorial writer. Return only clean HTML for the requested section.');
-    $ai->prompt(content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext));
+    $ai->prompt(content_ideas_section_prompt($idea, $section, $sections, $index, $editorialContext, $propertySettingsBlock));
     $response = $ai->send_request();
     if (($response['result'] ?? '') !== 'success') {
         throw new Exception($response['message'] ?? 'AI section generation failed.');
@@ -177,9 +239,10 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
     $generationStartedAt = date('Y-m-d H:i:s');
     $sections = content_ideas_decode_sections($idea['sections'] ?? '', $idea['summary'] ?? '');
     $editorialContext = editorial_context_get($dbo, (int)$idea['account_id'], (int)$idea['property_id']);
+    $propertySettingsBlock = publisher_property_general_settings_prompt_block_from_db($dbo, (int)$idea['account_id'], (int)$idea['property_id']);
     $bodyParts = [];
     foreach ($sections as $index => $section) {
-        $bodyParts[] = content_ideas_generate_section($dbo, $idea, $section, $sections, $index + 1, $editorialContext, $aiSettings, $userId);
+        $bodyParts[] = content_ideas_generate_section($dbo, $idea, $section, $sections, $index + 1, $editorialContext, $aiSettings, $userId, $propertySettingsBlock);
     }
 
     $imagePath = '';
@@ -187,7 +250,7 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
     if ($safeImagePrompt !== '') {
         try {
             $ai = new ai(publisher_require_ai_api_key($dbo, (int)$idea['account_id']));
-            $ai->image_model($aiSettings['image_model'] ?? 'gpt-image-1.5');
+            $ai->image_model($aiSettings['image_model'] ?? 'gpt-image-2');
             $ai->log_context($dbo, [
                 'account_id' => (int)$idea['account_id'],
                 'property_id' => (int)$idea['property_id'],
@@ -253,6 +316,7 @@ function content_ideas_create_article_from_idea($dbo, $idea, $userId, $aiSetting
             [$contentItemId, (int)$idea['category_id']]
         );
     }
+    content_ideas_attach_tags_to_content_item($dbo, $idea, $contentItemId);
 
     if ($imagePath !== '') {
         $dbo->execSQL(
