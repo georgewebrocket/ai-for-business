@@ -7,6 +7,7 @@ require_once('php/utils.php');
 require_once('php/start.php');
 require_once('php/session.php');
 require_once('php/controls.php');
+require_once('php/ai-settings.php');
 
 publisher_require_permission('properties');
 
@@ -60,10 +61,20 @@ $wordpressChannelRows = $id > 0 ? ($dbo->getRS(
     'SELECT id, name FROM distribution_channels WHERE account_id = ? AND property_id = ? AND type = ? AND status = ? ORDER BY name',
     [$current_account_id, $id, 'wordpress', 'active']
 ) ?: []) : [];
+$textModelRows = array_map(function($value, $label) {
+    return ['id' => $value, 'name' => $label];
+}, array_keys(publisher_ai_text_model_options($dbo, $current_account_id)), publisher_ai_text_model_options($dbo, $current_account_id));
+$imageModelRows = array_map(function($value, $label) {
+    return ['id' => $value, 'name' => $label];
+}, array_keys(publisher_ai_image_model_options($dbo, $current_account_id)), publisher_ai_image_model_options($dbo, $current_account_id));
 
 $settingsSelectOptions = [
     'default_ai_profile_id' => $aiProfileRows,
     'ai_profile_id' => $aiProfileRows,
+    'default_text_model' => $textModelRows,
+    'text_model' => $textModelRows,
+    'default_image_model' => $imageModelRows,
+    'image_model' => $imageModelRows,
     'default_writing_style_id' => $writingStyleRows,
     'writing_style_id' => $writingStyleRows,
     'default_template_id' => $templateRows,

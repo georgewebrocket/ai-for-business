@@ -134,8 +134,8 @@ function publisher_content_item_relative_media_path($path) {
 function publisher_content_item_image_model($dbo, $accountId, $propertyId) {
     $propertyRows = $dbo->getRS('SELECT settings_json FROM properties WHERE id = ? AND account_id = ? LIMIT 1', [$propertyId, $accountId]);
     $propertySettings = $propertyRows ? json_decode((string)$propertyRows[0]['settings_json'], true) : [];
-    $propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings) ? $propertySettings : []);
-    $contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $propertyAiDefaults);
+    $propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings) ? $propertySettings : [], $dbo, $accountId);
+    $contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $propertyAiDefaults, $dbo, $accountId);
     return $contentGenerationDefaults['image_model'] ?? 'gpt-image-2';
 }
 

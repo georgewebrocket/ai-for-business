@@ -81,6 +81,11 @@ if ($rs) {
     for ($i = 0; $i < count($rs); $i++) {
         if ($rs[$i]['key_code'] === 'ai-api-key') {
             $value = trim((string)$rs[$i]['key_value']) !== '' ? 'Configured' : 'Not configured';
+        } elseif ($rs[$i]['key_code'] === 'ai-model-registry-json') {
+            $decoded = json_decode((string)$rs[$i]['key_value'], true);
+            $value = is_array($decoded)
+                ? 'Cached models, checked ' . (string)($decoded['last_checked_at'] ?? 'unknown')
+                : 'Cached models';
         } elseif (strpos((string)$rs[$i]['key_code'], 'dashboard-user-') === 0) {
             $value = 'Dashboard layout';
         } else {

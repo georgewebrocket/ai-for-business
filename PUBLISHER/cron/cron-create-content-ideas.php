@@ -380,10 +380,10 @@ function cron_cci_save_idea($dbo, $property, $config, $article, $prompt, $aiResp
         'content_mix' => $mix,
         'brief' => $mix['brief'] ?? '',
         'ai_models' => [
-            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
-            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
-            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
-            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
+            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5', 'gpt-5.5', $dbo, $accountId),
+            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2', 'gpt-image-2', $dbo, $accountId),
+            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5', 'gpt-5.5', $dbo, $accountId),
+            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2', 'gpt-image-2', $dbo, $accountId),
         ],
         'ai_response' => json_decode($aiResponse, true) ?: $aiResponse,
         'source' => 'cron-create-content-ideas',
@@ -447,9 +447,9 @@ foreach ($properties as $property) {
     }
     unset($config['user_brief']);
 
-    $propertyAiDefaults = publisher_property_ai_defaults($settings);
-    $config['text_model'] = publisher_ai_normalize_text_model($config['text_model'] ?? null, $propertyAiDefaults['text_model']);
-    $config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model']);
+    $propertyAiDefaults = publisher_property_ai_defaults($settings, $dbo, (int)$property['account_id']);
+    $config['text_model'] = publisher_ai_normalize_text_model($config['text_model'] ?? null, $propertyAiDefaults['text_model'], $dbo, (int)$property['account_id']);
+    $config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model'], $dbo, (int)$property['account_id']);
 
     $targetCount = $isQueued ? 1 : max(1, (int)($config['article_count'] ?? 1));
     $period = in_array(($config['period'] ?? 'week'), ['day', 'week', 'two_weeks', 'four_weeks', 'month'], true) ? $config['period'] : 'week';

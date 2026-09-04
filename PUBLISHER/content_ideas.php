@@ -22,13 +22,13 @@ $success = '';
 
 $propertyRows = $dbo->getRS('SELECT settings_json FROM properties WHERE id = ? AND account_id = ? LIMIT 1', [$propertyId, $accountId]);
 $propertySettings = $propertyRows ? json_decode((string)$propertyRows[0]['settings_json'], true) : [];
-$propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings) ? $propertySettings : []);
-$contentIdeasGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'create_content_ideas', $propertyAiDefaults);
-$contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $contentIdeasGenerationDefaults);
+$propertyAiDefaults = publisher_property_ai_defaults(is_array($propertySettings) ? $propertySettings : [], $dbo, $accountId);
+$contentIdeasGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'create_content_ideas', $propertyAiDefaults, $dbo, $accountId);
+$contentGenerationDefaults = publisher_stage_ai_settings(is_array($propertySettings) ? $propertySettings : [], 'content_generation', $contentIdeasGenerationDefaults, $dbo, $accountId);
 $contentGenerationSaved = publisher_ai_get_settings_section(is_array($propertySettings) ? $propertySettings : [], 'content_generation');
 $publishingConfig = publisher_ai_get_settings_section(is_array($propertySettings) ? $propertySettings : [], 'publishing');
-$textModelOptions = publisher_ai_text_model_options();
-$imageModelOptions = publisher_ai_image_model_options();
+$textModelOptions = publisher_ai_text_model_options($dbo, $accountId);
+$imageModelOptions = publisher_ai_image_model_options($dbo, $accountId);
 $contentIdeaStatusOptions = ['suggested', 'accepted', 'rejected', 'converted'];
 
 function content_ideas_selected_ids($post) {
@@ -358,10 +358,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
     $settingsToSave = is_array($contentGenerationSaved) ? $contentGenerationSaved : [];
     $settingsToSave['schedule_pending'] = $generationMode === 'schedule';
     if ($postedAiSettings['text_model'] !== '') {
-        $settingsToSave['text_model'] = publisher_ai_normalize_text_model($postedAiSettings['text_model'], $contentGenerationDefaults['text_model']);
+        $settingsToSave['text_model'] = publisher_ai_normalize_text_model($postedAiSettings['text_model'], $contentGenerationDefaults['text_model'], $dbo, $accountId);
     }
     if ($postedAiSettings['image_model'] !== '') {
-        $settingsToSave['image_model'] = publisher_ai_normalize_image_model($postedAiSettings['image_model'], $contentGenerationDefaults['image_model']);
+        $settingsToSave['image_model'] = publisher_ai_normalize_image_model($postedAiSettings['image_model'], $contentGenerationDefaults['image_model'], $dbo, $accountId);
     }
     $propertySettings = publisher_ai_set_settings_section(is_array($propertySettings) ? $propertySettings : [], 'content_generation', 'Content Generation', $settingsToSave);
     $dbo->execSQL(
@@ -394,12 +394,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'gener
                 continue;
             }
             try {
-                $ideaAiSettings = publisher_idea_ai_settings($ideaRows[0], $contentIdeasGenerationDefaults);
+                $ideaAiSettings = publisher_idea_ai_settings($ideaRows[0], $contentIdeasGenerationDefaults, $dbo, $accountId);
                 if ($postedAiSettings['text_model'] !== '') {
-                    $ideaAiSettings['text_model'] = publisher_ai_normalize_text_model($postedAiSettings['text_model'], $ideaAiSettings['text_model']);
+                    $ideaAiSettings['text_model'] = publisher_ai_normalize_text_model($postedAiSettings['text_model'], $ideaAiSettings['text_model'], $dbo, $accountId);
                 }
                 if ($postedAiSettings['image_model'] !== '') {
-                    $ideaAiSettings['image_model'] = publisher_ai_normalize_image_model($postedAiSettings['image_model'], $ideaAiSettings['image_model']);
+                    $ideaAiSettings['image_model'] = publisher_ai_normalize_image_model($postedAiSettings['image_model'], $ideaAiSettings['image_model'], $dbo, $accountId);
                 }
                 $contentItemId = content_ideas_create_article_from_idea($dbo, $ideaRows[0], (int)$userid, $ideaAiSettings);
                 if (($publishingConfig['mode'] ?? '') === 'automatic') {

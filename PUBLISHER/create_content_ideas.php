@@ -140,7 +140,7 @@ function cci_review_required($config) {
     return filter_var($config['review_required'] ?? true, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== false;
 }
 
-function cci_normalize_config($post, $aiDefaults = []) {
+function cci_normalize_config($post, $aiDefaults = [], $dbo = null, $accountId = null) {
     $articleCount = max(1, min(50, (int)($post['article_count'] ?? 5)));
     $period = in_array(($post['period'] ?? 'week'), ['day', 'week', 'two_weeks', 'four_weeks', 'month'], true) ? $post['period'] : 'week';
     $mode = in_array(($post['mode'] ?? 'manual'), ['manual', 'automatic'], true) ? $post['mode'] : 'manual';
@@ -176,8 +176,8 @@ function cci_normalize_config($post, $aiDefaults = []) {
         'schedule_remaining' => $executionMode === 'schedule' ? $articleCount : 0,
         'schedule_cursor' => 0,
         'frequent_tags_frequency_hours' => $tagFrequency,
-        'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.5'), $aiDefaults['text_model'] ?? 'gpt-5.5'),
-        'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-2'), $aiDefaults['image_model'] ?? 'gpt-image-2'),
+        'text_model' => publisher_ai_normalize_text_model($post['text_model'] ?? ($aiDefaults['text_model'] ?? 'gpt-5.5'), $aiDefaults['text_model'] ?? 'gpt-5.5', $dbo, $accountId),
+        'image_model' => publisher_ai_normalize_image_model($post['image_model'] ?? ($aiDefaults['image_model'] ?? 'gpt-image-2'), $aiDefaults['image_model'] ?? 'gpt-image-2', $dbo, $accountId),
         'mix' => $mix,
     ];
 }
@@ -512,10 +512,10 @@ function cci_save_idea($dbo, $accountId, $propertyId, $userId, $config, $article
         'content_mix' => $mix,
         'brief' => $mix['brief'] ?? '',
         'ai_models' => [
-            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
-            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
-            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5'),
-            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2'),
+            'text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5', 'gpt-5.5', $dbo, $accountId),
+            'image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2', 'gpt-image-2', $dbo, $accountId),
+            'content_text_model' => publisher_ai_normalize_text_model($config['text_model'] ?? 'gpt-5.5', 'gpt-5.5', $dbo, $accountId),
+            'content_image_model' => publisher_ai_normalize_image_model($config['image_model'] ?? 'gpt-image-2', 'gpt-image-2', $dbo, $accountId),
         ],
         'ai_response' => json_decode($aiResponse, true) ?: $aiResponse,
     ];
@@ -558,7 +558,7 @@ if (!$propertyRows) {
 }
 $property = $propertyRows[0];
 $propertySettings = cci_decode_property_settings($property['settings_json'] ?? '');
-$propertyAiDefaults = publisher_property_ai_defaults($propertySettings);
+$propertyAiDefaults = publisher_property_ai_defaults($propertySettings, $dbo, $accountId);
 $savedConfig = cci_get_settings_section($propertySettings, 'create_content_ideas');
 $defaultConfig = [
     'article_count' => 5,
@@ -571,8 +571,8 @@ $defaultConfig = [
     'mix' => [],
 ];
 $config = array_merge($defaultConfig, is_array($savedConfig) ? $savedConfig : []);
-$config['text_model'] = publisher_ai_normalize_text_model($config['text_model'] ?? null, $propertyAiDefaults['text_model']);
-$config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model']);
+$config['text_model'] = publisher_ai_normalize_text_model($config['text_model'] ?? null, $propertyAiDefaults['text_model'], $dbo, $accountId);
+$config['image_model'] = publisher_ai_normalize_image_model($config['image_model'] ?? null, $propertyAiDefaults['image_model'], $dbo, $accountId);
 if (!isset($config['mix']) || !is_array($config['mix'])) {
     $config['mix'] = [];
 }
@@ -588,8 +588,8 @@ $categories = $dbo->getRS('SELECT id, name FROM content_categories WHERE account
 $writingStyles = $dbo->getRS('SELECT id, name FROM writing_styles WHERE account_id = ? AND property_id = ? ORDER BY name', [$accountId, $propertyId]) ?: [];
 $templates = $dbo->getRS('SELECT id, name FROM content_templates WHERE account_id = ? AND (property_id = ? OR property_id IS NULL) ORDER BY name', [$accountId, $propertyId]) ?: [];
 $imageStyles = $dbo->getRS('SELECT id, name FROM image_styles WHERE account_id = ? AND property_id = ? AND active = 1 ORDER BY name', [$accountId, $propertyId]) ?: [];
-$textModelOptions = publisher_ai_text_model_options();
-$imageModelOptions = publisher_ai_image_model_options();
+$textModelOptions = publisher_ai_text_model_options($dbo, $accountId);
+$imageModelOptions = publisher_ai_image_model_options($dbo, $accountId);
 
 $suggestions = $_SESSION[$sessionKey]['articles'] ?? [];
 $lastPrompt = $_SESSION[$sessionKey]['prompt'] ?? '';
@@ -599,7 +599,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'continue') {
-        $config = cci_normalize_config($_POST, $propertyAiDefaults);
+        $config = cci_normalize_config($_POST, $propertyAiDefaults, $dbo, $accountId);
         $config['created_by'] = $userId;
         $property['settings_json'] = cci_save_config($dbo, $propertyId, $accountId, $property['settings_json'] ?? '', $config);
         $success = 'Οι επιλογές αποθηκεύτηκαν.';

@@ -1,0 +1,6 @@
+<?php
+
+return [
+    'OPENAI_API_KEY' => 'sk-...',
+    'OPENAI_EMBEDDING_MODEL' => 'text-embedding-3-small',
+];

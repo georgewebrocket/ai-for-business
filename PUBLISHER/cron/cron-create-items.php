@@ -387,9 +387,9 @@ foreach ($properties as $property) {
         }
     }
 
-    $propertyAiDefaults = publisher_property_ai_defaults($settings);
-    $ideasDefaults = publisher_stage_ai_settings($settings, 'create_content_ideas', $propertyAiDefaults);
-    $aiSettings = publisher_stage_ai_settings($settings, 'content_generation', $ideasDefaults);
+    $propertyAiDefaults = publisher_property_ai_defaults($settings, $dbo, (int)$property['account_id']);
+    $ideasDefaults = publisher_stage_ai_settings($settings, 'create_content_ideas', $propertyAiDefaults, $dbo, (int)$property['account_id']);
+    $aiSettings = publisher_stage_ai_settings($settings, 'content_generation', $ideasDefaults, $dbo, (int)$property['account_id']);
     $publishingConfig = cron_ci_get_section($settings, 'publishing');
 
     $ideaRows = $dbo->getRS(
@@ -406,7 +406,7 @@ foreach ($properties as $property) {
     }
 
     try {
-        $ideaAiSettings = publisher_idea_ai_settings($ideaRows[0], $aiSettings);
+        $ideaAiSettings = publisher_idea_ai_settings($ideaRows[0], $aiSettings, $dbo, (int)$property['account_id']);
         $contentItemId = cron_ci_create_article_from_idea($dbo, $ideaRows[0], $ideaAiSettings);
         if ($isQueued) {
             $config['schedule_pending'] = false;
